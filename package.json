@@ -1,0 +1,47 @@
+{
+  "name": "research-experiment",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:e2e": "playwright test",
+    "test:db:setup": "tsx scripts/test-db-setup.ts",
+    "test:db:reset": "tsx scripts/test-db-reset.ts",
+    "create-admin": "tsx scripts/create-admin.ts",
+    "db:indexes": "tsx scripts/create-indexes.ts",
+    "db:check": "tsx scripts/check-db.ts"
+  },
+  "dependencies": {
+    "mongodb": "7.7.0",
+    "next": "16.3.8",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zod": "^4.1.11",
+    "@next/env": "16.3.8"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@tailwindcss/postcss": "^4.1.14",
+    "@types/node": "^24.5.2",
+    "@types/react": "^19.1.16",
+    "@types/react-dom": "^19.1.9",
+    "eslint": "^9.36.0",
+    "eslint-config-next": "16.3.8",
+    "prettier": "^3.6.2",
+    "tailwindcss": "^4.1.14",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

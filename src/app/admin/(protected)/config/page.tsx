@@ -1,0 +1,7 @@
+import { getAdminSession } from '@/lib/auth/admin-session';
+import { ResearchRepository } from '@/lib/repositories/research.repository';
+import { ConfigForm } from '@/components/admin/ConfigForm';
+export default async function Page(){
+ const admin=await getAdminSession();const repo=new ResearchRepository();const config=await repo.getConfig();const packages=await repo.listEligiblePackages(config.phase);
+ return <div className="stack"><h1>Cấu hình nghiên cứu</h1><p className="help">Chỉ nhập tài liệu nghiên cứu đã được duyệt. Không tự sửa nội dung Consent/Ethics.</p><section className="card"><ConfigForm config={{key:config.key,phase:config.phase,studyPublished:config.studyPublished??false,informationText:config.informationText,informationVersion:config.informationVersion,consentText:config.consentText,consentVersion:config.consentVersion,debriefText:config.debriefText,debriefVersion:config.debriefVersion,dataRightsText:config.dataRightsText,findingsText:config.findingsText,minimumReadingSeconds:config.minimumReadingSeconds,minimumValidTarget:config.minimumValidTarget,recruitmentTarget:config.recruitmentTarget,assignmentMode:config.assignmentMode??'FIXED',fixedPackageId:config.fixedPackageId??null,mainRandomApproved:config.mainRandomApproved??false,allowPilotRetakes:config.allowPilotRetakes??false}} packages={packages.map(p=>({id:p._id!.toString(),title:`${p.code} · ${p.title}`}))} disabled={admin?.role!=='RESEARCHER'}/></section></div>;
+}
