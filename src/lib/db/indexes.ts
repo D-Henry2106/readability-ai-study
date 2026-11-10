@@ -28,6 +28,9 @@ export async function ensureIndexes(): Promise<void> {
     c.adminSessions.createIndex({ username: 1, revokedAt: 1 }),
     c.adminSessions.createIndex({ absoluteExpiresAt: 1 }, { expireAfterSeconds: 86400 }),
     c.rateLimits.createIndex({ key: 1, windowStart: 1 }, { unique: true }),
-    c.rateLimits.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 })
+    c.rateLimits.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    // Study Run (P1): unique run code and status lookups.
+    c.studyRuns.createIndex({ code: 1 }, { unique: true }),
+    c.studyRuns.createIndex({ status: 1 })
   ]);
 }

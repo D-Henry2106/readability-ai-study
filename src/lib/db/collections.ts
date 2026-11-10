@@ -17,6 +17,7 @@ import type {
   SessionDoc,
   TestAttemptDoc
 } from '@/types/research';
+import type { StudyRunDoc } from '@/types/study-run';
 
 export async function collections(): Promise<{
   sessions: Collection<SessionDoc>;
@@ -34,6 +35,7 @@ export async function collections(): Promise<{
   adminSessions: Collection<AdminSessionDoc>;
   rateLimits: Collection<RateLimitDoc>;
   experimentConfig: Collection<ExperimentConfigDoc>;
+  studyRuns: Collection<StudyRunDoc>;
 }> {
   const db = await getDb();
   return {
@@ -51,6 +53,7 @@ export async function collections(): Promise<{
     adminAudit: db.collection<AdminAuditDoc>('admin_audit'),
     adminSessions: db.collection<AdminSessionDoc>('admin_sessions'),
     rateLimits: db.collection<RateLimitDoc>('rate_limits'),
-    experimentConfig: db.collection<ExperimentConfigDoc>('experiment_config')
+    experimentConfig: db.collection<ExperimentConfigDoc>('experiment_config'),
+    studyRuns: db.collection<StudyRunDoc>('study_runs')
   };
 }
