@@ -13,6 +13,13 @@ const appEnvSchema = z.object({
   APP_URL: z.string().url().default('http://localhost:3000')
 });
 
+const securityEnvSchema = z.object({
+  /** Set to "true" only behind a proxy that overwrites X-Forwarded-For (e.g. Vercel). Otherwise client IPs are unknown. */
+  TRUST_PROXY_HEADERS: z.enum(['true', 'false']).default('false'),
+  ADMIN_SESSION_IDLE_MINUTES: z.coerce.number().int().min(5).max(240).default(30),
+  ADMIN_SESSION_ABSOLUTE_HOURS: z.coerce.number().int().min(1).max(24).default(8)
+});
+
 function parseEnv<T>(schema: z.ZodType<T>, label: string): T {
   const result = schema.safeParse(process.env);
   if (!result.success) {
@@ -33,6 +40,10 @@ export function getAuthEnv() {
 
 export function getAppEnv() {
   return parseEnv(appEnvSchema, 'application');
+}
+
+export function getSecurityEnv() {
+  return parseEnv(securityEnvSchema, 'security');
 }
 
 export function getEnv() {

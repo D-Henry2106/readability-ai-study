@@ -3,6 +3,7 @@ import { getDb } from './mongodb';
 import type {
   AdminAuditDoc,
   AdminDoc,
+  AdminSessionDoc,
   BreakDoc,
   ConsentDoc,
   ContentRevisionDoc,
@@ -11,6 +12,7 @@ import type {
   ExperimentConfigDoc,
   ExperimentEventDoc,
   QuestionSetDoc,
+  RateLimitDoc,
   ReadingSessionDoc,
   SessionDoc,
   TestAttemptDoc
@@ -29,6 +31,8 @@ export async function collections(): Promise<{
   experimentEvents: Collection<ExperimentEventDoc>;
   admins: Collection<AdminDoc>;
   adminAudit: Collection<AdminAuditDoc>;
+  adminSessions: Collection<AdminSessionDoc>;
+  rateLimits: Collection<RateLimitDoc>;
   experimentConfig: Collection<ExperimentConfigDoc>;
 }> {
   const db = await getDb();
@@ -45,6 +49,8 @@ export async function collections(): Promise<{
     experimentEvents: db.collection<ExperimentEventDoc>('experiment_events'),
     admins: db.collection<AdminDoc>('admins'),
     adminAudit: db.collection<AdminAuditDoc>('admin_audit'),
+    adminSessions: db.collection<AdminSessionDoc>('admin_sessions'),
+    rateLimits: db.collection<RateLimitDoc>('rate_limits'),
     experimentConfig: db.collection<ExperimentConfigDoc>('experiment_config')
   };
 }

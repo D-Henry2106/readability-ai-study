@@ -15,7 +15,7 @@ export async function GET() {
     const packages = await repo.listPackages();
     return NextResponse.json(await Promise.all(packages.map(async pkg => {
       const [content, set] = await Promise.all([repo.getContentById(pkg.contentRevisionId), repo.getQuestionSetById(pkg.questionSetId)]);
-      return { ...pkg, rawContent: content?.rawContent ?? '', contentRevision: content?.revision ?? null, questions: set?.questions ?? [], questionRevision: set?.revision ?? null };
+      return { ...pkg, rawContent: content?.rawContent ?? '', contentRevision: content?.revision ?? null, questions: set?.questions ?? [], questionRevision: set?.revision ?? null, validation: await new PackageService(repo).checklist(pkg) };
     })));
   } catch (e) { return jsonError(e); }
 }

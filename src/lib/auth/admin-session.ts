@@ -1,61 +1,55 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
 import { cookies } from 'next/headers';
-import { getAuthEnv } from '@/config/env';
+import { getSecurityEnv } from '@/config/env';
+import {
+  AdminSessionService, MongoAdminDirectory, MongoAdminSessionStore,
+  type AdminSessionPayload
+} from './admin-session-service';
 import type { AdminRole } from '@/types/research';
 
-const COOKIE = 'research_admin';
-const MAX_AGE_SECONDS = 8 * 60 * 60;
+export type { AdminSessionPayload } from './admin-session-service';
 
-export interface AdminSessionPayload {
-  username: string;
-  role: AdminRole;
-  exp: number;
-}
+const LEGACY_HMAC_COOKIE = 'research_admin';
+const isProduction = () => process.env.NODE_ENV === 'production';
+/** The __Host- prefix makes browsers require Secure + Path=/ + no Domain in production. */
+export const adminCookieName = () => (isProduction() ? '__Host-research_admin_sid' : 'research_admin_sid');
 
-function sign(body: string): string {
-  return createHmac('sha256', getAuthEnv().AUTH_SECRET).update(body).digest('base64url');
-}
-
-export function encodeAdminSession(payload: AdminSessionPayload): string {
-  const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
-  return `${body}.${sign(body)}`;
-}
-
-export function decodeAdminSession(token: string): AdminSessionPayload | null {
-  const [body, signature] = token.split('.');
-  if (!body || !signature) return null;
-  const expected = Buffer.from(sign(body));
-  const actual = Buffer.from(signature);
-  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return null;
-  try {
-    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as AdminSessionPayload;
-    if (!payload.username || !['RESEARCHER', 'SUPERVISOR'].includes(payload.role) || payload.exp < Date.now()) return null;
-    return payload;
-  } catch {
-    return null;
-  }
-}
-
-export async function setAdminSession(username: string, role: AdminRole): Promise<void> {
-  const store = await cookies();
-  store.set(COOKIE, encodeAdminSession({ username, role, exp: Date.now() + MAX_AGE_SECONDS * 1000 }), {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-    maxAge: MAX_AGE_SECONDS
+export function adminSessionService(): AdminSessionService {
+  return new AdminSessionService(new MongoAdminSessionStore(), new MongoAdminDirectory(), () => {
+    const env = getSecurityEnv();
+    return { idleMs: env.ADMIN_SESSION_IDLE_MINUTES * 60_000, absoluteMs: env.ADMIN_SESSION_ABSOLUTE_HOURS * 3_600_000 };
   });
 }
 
+/**
+ * Log in = rotate: the presented session (if any) is revoked server-side and a fresh random token is issued.
+ * Any pre-migration HMAC cookie is deleted and is never honoured again.
+ */
+export async function startAdminSession(username: string): Promise<void> {
+  const store = await cookies();
+  const service = adminSessionService();
+  await service.revoke(store.get(adminCookieName())?.value, 'ROTATED_ON_LOGIN');
+  const { token, maxAgeSeconds } = await service.issue(username);
+  store.set(adminCookieName(), token, { httpOnly: true, secure: isProduction(), sameSite: 'strict', path: '/', maxAge: maxAgeSeconds });
+  store.delete(LEGACY_HMAC_COOKIE);
+}
+
+/** @deprecated Kept for source compatibility; the role is read from the admins collection on every request. */
+export async function setAdminSession(username: string, _role?: AdminRole): Promise<void> {
+  void _role;
+  await startAdminSession(username);
+}
+
+/** Logout: revoke on the server first, so a copied cookie cannot be replayed, then expire the cookie. */
 export async function clearAdminSession(): Promise<void> {
   const store = await cookies();
-  store.delete(COOKIE);
+  await adminSessionService().revoke(store.get(adminCookieName())?.value, 'LOGOUT');
+  store.delete(adminCookieName());
+  store.delete(LEGACY_HMAC_COOKIE);
 }
 
 export async function getAdminSession(): Promise<AdminSessionPayload | null> {
-  const store = await cookies();
-  const token = store.get(COOKIE)?.value;
-  return token ? decodeAdminSession(token) : null;
+  const token = (await cookies()).get(adminCookieName())?.value;
+  return adminSessionService().validate(token);
 }
 
 export async function requireAdmin(roles?: AdminRole[]): Promise<AdminSessionPayload> {

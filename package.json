@@ -20,7 +20,8 @@
     "test:db:reset": "tsx scripts/test-db-reset.ts",
     "create-admin": "tsx scripts/create-admin.ts",
     "db:indexes": "tsx scripts/create-indexes.ts",
-    "db:check": "tsx scripts/check-db.ts"
+    "db:check": "tsx scripts/check-db.ts",
+    "admin:disable": "tsx scripts/disable-admin.ts"
   },
   "dependencies": {
     "mongodb": "7.7.0",

@@ -6,7 +6,7 @@ export class AuditService {
 
   async record(input: {
     username: string;
-    role: AdminRole;
+    role: AdminRole | 'SYSTEM';
     action: string;
     targetType: string;
     targetId?: string | null;

@@ -239,12 +239,37 @@ export interface AdminDoc {
   passwordHash: string;
   role: AdminRole;
   createdAt: Date;
+  /** Set when an account is disabled; a disabled admin can neither log in nor keep a session. */
+  disabledAt?: Date | null;
+  passwordChangedAt?: Date | null;
+}
+
+/** Server-side admin session. Only the hash of the random cookie token is stored. */
+export interface AdminSessionDoc {
+  _id?: ObjectId;
+  tokenHash: string;
+  username: string;
+  createdAt: Date;
+  lastSeenAt: Date;
+  idleExpiresAt: Date;
+  absoluteExpiresAt: Date;
+  revokedAt: Date | null;
+  revokedReason?: string | null;
+}
+
+/** Fixed-window counter shared by every server instance (keys are keyed hashes, never raw IPs). */
+export interface RateLimitDoc {
+  _id?: ObjectId;
+  key: string;
+  windowStart: Date;
+  count: number;
+  expiresAt: Date;
 }
 
 export interface AdminAuditDoc {
   _id?: ObjectId;
   username: string;
-  role: AdminRole;
+  role: AdminRole | 'SYSTEM';
   action: string;
   targetType: string;
   targetId: string | null;

@@ -1,6 +1,7 @@
 import { ResearchRepository } from '@/lib/repositories/research.repository';
 import { AuditService } from './audit.service';
 import { checkValidity } from './validity.service';
+import { assertRole } from '@/lib/auth/roles';
 import type { AdminRole, ValidityFlag } from '@/types/research';
 
 export const VALIDITY_CHECKLIST_VERSION = 1;
@@ -16,6 +17,7 @@ export async function reviewSessionValidity(
   reviewer: { username: string; role: AdminRole },
   repo = new ResearchRepository()
 ): Promise<ValidityReviewResult> {
+  assertRole(reviewer, ['RESEARCHER']);
   const bundle = await repo.getSessionBundle(id);
   if (!bundle.session) return { status: 404, body: { error: 'Không tìm thấy phiên.' } };
   if (bundle.session.status !== 'COMPLETED') return { status: 409, body: { error: 'Chỉ xét phiên đã hoàn thành.' } };

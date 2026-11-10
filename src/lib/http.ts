@@ -33,3 +33,28 @@ export function jsonError(error: unknown): NextResponse {
   console.error('Unhandled server error (type only):', error instanceof Error ? error.name : 'Unknown');
   return NextResponse.json({ error: 'Có lỗi máy chủ. Vui lòng thử lại.' }, { status: 500 });
 }
+
+/** 429 with Retry-After; never include the identifier that was throttled. */
+export function tooManyRequests(retryAfterSeconds: number): NextResponse {
+  const seconds = Math.max(1, Math.ceil(retryAfterSeconds));
+  return NextResponse.json(
+    { error: 'Quá nhiều yêu cầu. Vui lòng thử lại sau.', retryAfterSeconds: seconds },
+    { status: 429, headers: { 'Retry-After': String(seconds), 'Cache-Control': 'no-store' } }
+  );
+}
+
+/**
+ * Wraps a canonical route handler so a legacy URL runs the exact same code (same auth, roles,
+ * checklist and publish rules) and only adds deprecation headers. Aliases must never hold logic.
+ */
+export function deprecatedAlias<A extends unknown[]>(
+  handler: (...args: A) => Promise<Response>,
+  successorPath: string
+): (...args: A) => Promise<Response> {
+  return async (...args: A) => {
+    const response = await handler(...args);
+    response.headers.set('Deprecation', 'true');
+    response.headers.set('Link', `<${successorPath}>; rel="successor-version"`);
+    return response;
+  };
+}

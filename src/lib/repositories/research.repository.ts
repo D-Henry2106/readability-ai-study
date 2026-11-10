@@ -46,16 +46,6 @@ export class ResearchRepository {
     return (await experimentConfig.findOne({ key: 'active' })) ?? defaultConfig;
   }
 
-  async upsertConfig(update: Partial<Omit<ExperimentConfigDoc, '_id' | 'key'>>): Promise<ExperimentConfigDoc> {
-    const { experimentConfig } = await collections();
-    await experimentConfig.updateOne(
-      { key: 'active' },
-      { $set: { ...update, updatedAt: new Date() }, $setOnInsert: { key: 'active' } },
-      { upsert: true }
-    );
-    return (await experimentConfig.findOne({ key: 'active' })) as ExperimentConfigDoc;
-  }
-
   /** Compare-and-swap: validation happens before this single write. Never unpublish on rejection. */
   async saveConfigIfUnchanged(
     expected: ExperimentConfigDoc,
@@ -114,6 +104,12 @@ export class ResearchRepository {
   async updateDraftPackage(id: ObjectId, update: Partial<ContentPackageDoc>): Promise<ContentPackageDoc | null> {
     const { contentPackages } = await collections();
     return contentPackages.findOneAndUpdate({ _id: id, status: 'DRAFT' }, { $set: { ...update, updatedAt: new Date() } }, { returnDocument: 'after' });
+  }
+
+  /** True when a content/question revision belongs to a content package (those may only change through the package flow). */
+  async isRevisionOwnedByPackage(kind: 'content' | 'questions', id: ObjectId): Promise<boolean> {
+    const { contentPackages } = await collections();
+    return (await contentPackages.countDocuments(kind === 'content' ? { contentRevisionId: id } : { questionSetId: id }, { limit: 1 })) > 0;
   }
 
   async publishPackage(id: ObjectId): Promise<ContentPackageDoc | null> {
@@ -322,6 +318,7 @@ export class ResearchRepository {
     pageSize: number;
     search?: string;
     packageCode?: string;
+    revision?: number;
     status?: SessionDoc['status'];
     groupCode?: GroupCode;
     validityFlag?: ValidityFlag;
@@ -333,6 +330,7 @@ export class ResearchRepository {
     if (options.search) filter.id = { $regex: options.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
     if (options.status) filter.status = options.status;
     if (options.packageCode) filter.assignedPackageCode = options.packageCode.trim().toUpperCase();
+    if (options.revision) filter.assignedPackageRevision = options.revision;
     if (options.groupCode) filter.groupCode = options.groupCode;
     if (options.validityFlag) filter.validityFlag = options.validityFlag;
     if (options.phase) filter.phase = options.phase;

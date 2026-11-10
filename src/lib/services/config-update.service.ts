@@ -4,12 +4,14 @@ import { AuditService } from './audit.service';
 import type { AdminRole, ExperimentConfigDoc } from '@/types/research';
 import type { z } from 'zod';
 import { configSchema } from '@/lib/validation/schemas';
+import { assertRole } from '@/lib/auth/roles';
 
 export async function updateResearchConfig(
   input: z.infer<typeof configSchema>,
   actor: { username: string; role: AdminRole },
   repo = new ResearchRepository()
 ) {
+  assertRole(actor, ['RESEARCHER']);
   // Construct the proposed config in memory; never unpublish as a temporary step.
   const previous = await repo.getConfig();
   const proposed: ExperimentConfigDoc = { ...previous, ...input };
