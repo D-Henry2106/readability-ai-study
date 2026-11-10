@@ -1,9 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { resetAndSeedReady, withTestDb } from '../helpers/test-db';
-import { ensureIndexes } from '@/lib/db/indexes';
 import { hashPassword } from '@/lib/security/password';
 import { MongoRateLimitStore } from '@/lib/security/rate-limit';
+import { pinClockMidWindow, releaseClock } from '../helpers/clock';
 
 // A tiny in-memory cookie jar stands in for the browser; everything else (routes, sessions, DB) is real.
 const jar = new Map<string, string>();
@@ -20,9 +20,11 @@ const PASSWORD = 'Fixture-Pass-2026-xyz';
 const post = (url: string, body: unknown) => new NextRequest(`http://localhost${url}`, { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } });
 const SID = 'research_admin_sid';
 
+let cachedHash: string | undefined;   // scrypt is deliberately slow: hash once per file, not once per test
 async function seedAdmins() {
+  cachedHash ??= await hashPassword(PASSWORD);
   await withTestDb(async (db) => {
-    const passwordHash = await hashPassword(PASSWORD);
+    const passwordHash = cachedHash!;
     await db.collection('admins').insertMany([
       { username: 'researcher', passwordHash, role: 'RESEARCHER', createdAt: new Date() },
       { username: 'supervisor', passwordHash, role: 'SUPERVISOR', createdAt: new Date() }
@@ -35,10 +37,13 @@ async function login(username = 'researcher', password = PASSWORD) {
 }
 
 describe('admin authentication on a real MongoDB', () => {
+  // Fixed-window limits (15 min): without a pinned clock these tests fail if a run straddles a window boundary.
   beforeEach(async () => {
-    await resetAndSeedReady(); await ensureIndexes(); await seedAdmins();
+    pinClockMidWindow();
+    await resetAndSeedReady(); await seedAdmins();
     jar.clear(); for (const k of Object.keys(cookieOptions)) delete cookieOptions[k];
   });
+  afterEach(() => releaseClock());
 
   it('creates the additive auth/rate-limit indexes, including TTL cleanup', async () => {
     const [sess, rl] = await withTestDb(async (db) => [await db.collection('admin_sessions').indexes(), await db.collection('rate_limits').indexes()]);
@@ -155,7 +160,7 @@ describe('admin authentication on a real MongoDB', () => {
 });
 
 describe('rate-limit store atomicity', () => {
-  beforeEach(async () => { await resetAndSeedReady(); await ensureIndexes(); });
+  beforeEach(async () => { await resetAndSeedReady(); });
   it('25 parallel hits on a brand-new key are all counted exactly once (no lost update, no duplicate-key failure)', async () => {
     const store = new MongoRateLimitStore(); const now = new Date();
     const results = await Promise.all(Array.from({ length: 25 }, () => store.hit('burst', 60_000, now)));

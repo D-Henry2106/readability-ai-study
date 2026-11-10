@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { ObjectId } from 'mongodb';
 import { resetAndSeedReady, withTestDb } from '../helpers/test-db';
-import { ensureIndexes } from '@/lib/db/indexes';
 import { ResearchRepository } from '@/lib/repositories/research.repository';
 
 const requireAdmin = vi.fn();
@@ -13,7 +12,6 @@ describe('Group A on a real MongoDB', () => {
   let contentId: ObjectId, questionSetId: ObjectId;
   beforeEach(async () => {
     ({ contentId, questionSetId } = await resetAndSeedReady({ existingGroup: 'A' }));
-    await ensureIndexes();
     requireAdmin.mockReset();
     requireAdmin.mockResolvedValue({ username: 'r', role: 'RESEARCHER', exp: 0 });
   });
