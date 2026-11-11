@@ -23,6 +23,7 @@ function participantRules(request: NextRequest, ip: string | null): RateLimitRul
   const rules: RateLimitRule[] = [];
   if (ip) rules.push({ key: `participant:ip:${keyPart(ip)}`, limit: 1500, windowMs: MIN });
   if (request.nextUrl.pathname === '/api/session' && ip) rules.push({ key: `session-create:ip:${keyPart(ip)}`, limit: 300, windowMs: 10 * MIN });
+  if (request.nextUrl.pathname === '/api/invitations/redeem' && ip) rules.push({ key: `invitation-redeem:ip:${keyPart(ip)}`, limit: 300, windowMs: 10 * MIN });
   const cookie = request.cookies.get(PARTICIPANT_COOKIE)?.value;
   if (cookie) rules.push({ key: `participant:cookie:${keyPart(cookie)}`, limit: 60, windowMs: MIN });
   return rules;
@@ -65,6 +66,11 @@ function handlePage(request: NextRequest): NextResponse {
   headers.set('Content-Security-Policy', csp);
   const response = NextResponse.next({ request: { headers } });
   response.headers.set('Content-Security-Policy', csp);
+  if (request.nextUrl.pathname === '/i') {
+    // Study Run invitation entry: defence in depth next to next.config.ts (the token is in the fragment and is never sent anyway).
+    response.headers.set('Referrer-Policy', 'no-referrer');
+    response.headers.set('Cache-Control', 'no-store');
+  }
   return withHsts(request, response);
 }
 

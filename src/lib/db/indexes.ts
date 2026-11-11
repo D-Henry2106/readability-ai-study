@@ -31,6 +31,12 @@ export async function ensureIndexes(): Promise<void> {
     c.rateLimits.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
     // Study Run (P1): unique run code and status lookups.
     c.studyRuns.createIndex({ code: 1 }, { unique: true }),
-    c.studyRuns.createIndex({ status: 1 })
+    c.studyRuns.createIndex({ status: 1 }),
+    // Study Run (P2): invitations (token lookup by hash, one session per invitation) and run-aware session lookups.
+    c.invitations.createIndex({ tokenHash: 1 }, { unique: true }),
+    c.invitations.createIndex({ studyRunId: 1, variant: 1, status: 1 }),
+    c.invitations.createIndex({ sessionId: 1 }, { unique: true, sparse: true }),
+    c.sessions.createIndex({ invitationId: 1 }, { unique: true, sparse: true }),
+    c.sessions.createIndex({ studyRunId: 1, presentationVariant: 1, status: 1, validityFlag: 1 })
   ]);
 }

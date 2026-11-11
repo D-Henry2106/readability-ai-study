@@ -56,6 +56,16 @@ export class FakeStudyRunStore implements StudyRunStore {
     this.docs.set(id.toHexString(), next);
     return clone(next);
   }
+  async lockIfUnlocked(id: ObjectId): Promise<StudyRunDoc | null> {
+    const doc = this.docs.get(id.toHexString());
+    if (!doc || doc.locked) return null;
+    const next = { ...doc, locked: true, version: doc.version + 1 };
+    this.docs.set(id.toHexString(), next);
+    return clone(next);
+  }
+  async hasOpenRunBlockingLegacyEntry(): Promise<boolean> {
+    return [...this.docs.values()].some((d) => d.status === 'OPEN' && d.entryPolicy?.legacyEntry === 'BLOCKED_WHILE_OPEN');
+  }
   /** Test-only: simulate the P4 quota service (not part of the store port). */
   setArmsForTest(id: ObjectId, arms: StudyRunDoc['arms']): void {
     const doc = this.docs.get(id.toHexString())!;

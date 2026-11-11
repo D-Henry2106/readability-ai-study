@@ -37,6 +37,10 @@ export interface StudyRunStore {
     update: StudyRunAdminUpdate,
     guard?: Filter<StudyRunDoc>
   ): Promise<StudyRunDoc | null>;
+  /** P2: CAS `locked: false -> true` when the first invitation is issued. Returns the run only when this call did the locking. */
+  lockIfUnlocked(id: ObjectId): Promise<StudyRunDoc | null>;
+  /** P2: true when at least one OPEN run chose `legacyEntry = BLOCKED_WHILE_OPEN` (enforced by /api/session). */
+  hasOpenRunBlockingLegacyEntry(): Promise<boolean>;
 }
 
 export class StudyRunRepository implements StudyRunStore {
@@ -73,5 +77,15 @@ export class StudyRunRepository implements StudyRunStore {
       { $set: update, $inc: { version: 1 } },
       { returnDocument: 'after' }
     );
+  }
+
+  async lockIfUnlocked(id: ObjectId): Promise<StudyRunDoc | null> {
+    const { studyRuns } = await collections();
+    return studyRuns.findOneAndUpdate({ _id: id, locked: false }, { $set: { locked: true }, $inc: { version: 1 } }, { returnDocument: 'after' });
+  }
+
+  async hasOpenRunBlockingLegacyEntry(): Promise<boolean> {
+    const { studyRuns } = await collections();
+    return (await studyRuns.countDocuments({ status: 'OPEN', 'entryPolicy.legacyEntry': 'BLOCKED_WHILE_OPEN' }, { limit: 1 })) > 0;
   }
 }

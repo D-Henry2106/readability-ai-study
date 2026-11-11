@@ -282,15 +282,17 @@ describe('AC-27 StudyRunStatus, entry policy and capability gate', () => {
     expect(changes.map((a) => `${a.metadata!.from}->${a.metadata!.to}`)).toEqual(['DRAFT->OPEN', 'OPEN->PAUSED', 'PAUSED->OPEN', 'OPEN->CLOSED', 'CLOSED->OPEN']);
     expect(changes[changes.length - 1].metadata!.reason).toBe('recruit more');
   });
-  it('production capabilities are all false, so a real run cannot be opened in P1', async () => {
-    expect(Object.values(STUDY_RUN_CAPABILITIES).every((v) => v === false)).toBe(true);
+  it('production capabilities: only P2 invitationRedemption is true, so a real run still cannot be opened before P3/P4', async () => {
+    expect(STUDY_RUN_CAPABILITIES.invitationRedemption).toBe(true);
+    expect([STUDY_RUN_CAPABILITIES.presentationProfile, STUDY_RUN_CAPABILITIES.singleRoundFlow, STUDY_RUN_CAPABILITIES.quotaRecording].every((v) => v === false)).toBe(true);
     expect(Object.isFrozen(STUDY_RUN_CAPABILITIES)).toBe(true);
     const h = makeHarness();
     const run = await ready(h);
     const { StudyRunService } = await import('@/lib/services/study-run.service');
     const prod = new StudyRunService({ ...h.deps, capabilities: undefined });
     const details = await expectStudyRunError(prod.transition(RESEARCHER, id(run), { expectedVersion: run.version, to: 'OPEN' }), 'STUDY_RUN_NOT_READY', 409);
-    for (const name of ['invitationRedemption', 'presentationProfile', 'singleRoundFlow', 'quotaRecording']) expect(details).toContain(`CAPABILITY:${name}`);
+    for (const name of ['presentationProfile', 'singleRoundFlow', 'quotaRecording']) expect(details).toContain(`CAPABILITY:${name}`);
+    expect(details.includes('CAPABILITY:invitationRedemption')).toBe(false);
     expect((await h.service.get(RESEARCHER, id(run))).status).toBe('DRAFT');
   });
   it('with injected capabilities the open conditions are exactly: quota, entry policy, info/consent, snapshot, capabilities', async () => {

@@ -2,7 +2,8 @@
  * Capability gate (architecture §3.5). A real Study Run may only be OPENed once every capability that makes
  * its participant flow complete exists. Each later patch flips only the capability it delivers:
  * P2 invitationRedemption, P3 presentationProfile, P4 singleRoundFlow + quotaRecording.
- * In P1 none exists, so DRAFT -> OPEN (and CLOSED -> OPEN) is refused in production. Tests inject `true`.
+ * P2 delivers invitationRedemption; the other three stay false until P3/P4, so DRAFT -> OPEN (and CLOSED -> OPEN)
+ * is still refused in production. Tests inject `true`.
  */
 export interface StudyRunCapabilities {
   readonly invitationRedemption: boolean;
@@ -12,7 +13,7 @@ export interface StudyRunCapabilities {
 }
 
 export const STUDY_RUN_CAPABILITIES: StudyRunCapabilities = Object.freeze({
-  invitationRedemption: false,
+  invitationRedemption: true,
   presentationProfile: false,
   singleRoundFlow: false,
   quotaRecording: false

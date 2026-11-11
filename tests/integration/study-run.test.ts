@@ -100,14 +100,15 @@ describe('Study Run core on a real MongoDB (P1)', () => {
     expect((await runs())[0].status).toBe('DRAFT');
   });
 
-  it('AC-27: full lifecycle with injected capabilities; production capabilities refuse OPEN', async () => {
+  it('AC-27: full lifecycle with injected capabilities; production capabilities (P3/P4 still false) refuse OPEN', async () => {
     const { run } = await service().create(RESEARCHER, input());
     let v = (await service().confirmQuota(RESEARCHER, hex(run._id), { expectedVersion: 1, quotaPerArm: 15 })).run.version;
     v = (await service().confirmEntryPolicy(RESEARCHER, hex(run._id), { expectedVersion: v, legacyEntry: 'BLOCKED_WHILE_OPEN' })).run.version;
     v = (await service().confirmInfoConsentReview(RESEARCHER, hex(run._id), { expectedVersion: v, statement: INFO_CONSENT_REVIEW_STATEMENT })).run.version;
     const production = new StudyRunService();
     const details = await expectStudyRunError(production.transition(RESEARCHER, hex(run._id), { expectedVersion: v, to: 'OPEN' }), 'STUDY_RUN_NOT_READY', 409);
-    expect(details).toContain('CAPABILITY:invitationRedemption');
+    expect(details).toContain('CAPABILITY:presentationProfile');
+    expect(details.includes('CAPABILITY:invitationRedemption')).toBe(false);
     expect((await runs())[0].status).toBe('DRAFT');
     const opened = await service().transition(RESEARCHER, hex(run._id), { expectedVersion: v, to: 'OPEN' });
     const paused = await service().transition(RESEARCHER, hex(run._id), { expectedVersion: opened.run.version, to: 'PAUSED' });

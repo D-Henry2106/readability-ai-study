@@ -81,6 +81,12 @@ export interface SessionDoc {
   validityChecklistVersion?: number | null;
   validityHistory?: Array<{ flag: ValidityFlag; reason: string | null; reviewedBy: string; reviewedAt: Date }>;
   pilotRestartedAt?: Date;
+  /** Study Run fields (P2). Absent on every legacy session: absence means the legacy flow. */
+  studyRunId?: ObjectId;
+  invitationId?: ObjectId;
+  presentationVariant?: Presentation;
+  presentationVersion?: number | null;
+  presentationProfileId?: ObjectId;
   pilotReplacementSessionId?: string;
   createdAt: Date;
   updatedAt: Date;
