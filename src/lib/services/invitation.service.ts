@@ -2,6 +2,10 @@ import { ObjectId } from 'mongodb';
 import { assertRole } from '@/lib/auth/roles';
 import { ResearchRepository } from '@/lib/repositories/research.repository';
 import { InvitationRepository, type InvitationAdminStore } from '@/lib/repositories/invitation.repository';
+import {
+  PresentationProfileRepository,
+  type PresentationProfileStore
+} from '@/lib/repositories/presentation-profile.repository';
 import { StudyRunRepository, type StudyRunStore } from '@/lib/repositories/study-run.repository';
 import { AuditService } from './audit.service';
 import { StudyRunError } from '@/lib/study-run/errors';
@@ -11,12 +15,14 @@ import {
 } from '@/lib/validation/invitation-schemas';
 import type { AdminRole } from '@/types/research';
 import type { InvitationDoc } from '@/types/invitation';
+import type { StudyRunDoc } from '@/types/study-run';
 
 export interface InvitationActor { username: string; role: AdminRole }
 
 export interface InvitationServiceDeps {
   invitations?: InvitationAdminStore;
   runs?: Pick<StudyRunStore, 'getById' | 'lockIfUnlocked'>;
+  profiles?: Pick<PresentationProfileStore, 'getById' | 'lockIfConfirmed'>;
   research?: Pick<ResearchRepository, 'getSession' | 'addAudit'>;
   audit?: Pick<AuditService, 'record'>;
   /** Public base URL used to build links (defaults to APP_URL). */
@@ -32,12 +38,15 @@ export type InvitationView = Omit<InvitationDoc, 'tokenHash'>;
 const view = ({ tokenHash: _hash, ...rest }: InvitationDoc): InvitationView => { void _hash; return rest; };
 
 /**
- * Admin-side invitation operations (architecture §2.2). Every write requires RESEARCHER and is audited; audit entries carry the
+ * Admin-side invitation operations (architecture §2.2, §6.5). Every write requires RESEARCHER and is audited; audit entries carry the
  * invitation id (its "code"), never the token or its hash. The system never creates, revokes or expires an invitation by itself.
+ * Issuing the first invitation of a run atomically locks both the run (`locked: false -> true`) and its V2 presentation profile
+ * (`CONFIRMED -> LOCKED`) via compare-and-set.
  */
 export class InvitationService {
   private readonly invitations: InvitationAdminStore;
   private readonly runs: NonNullable<InvitationServiceDeps['runs']>;
+  private readonly profiles: NonNullable<InvitationServiceDeps['profiles']>;
   private readonly research: NonNullable<InvitationServiceDeps['research']>;
   private readonly audit: NonNullable<InvitationServiceDeps['audit']>;
   private readonly baseUrl: () => string;
@@ -47,6 +56,7 @@ export class InvitationService {
     const research = deps.research ?? new ResearchRepository();
     this.invitations = deps.invitations ?? new InvitationRepository();
     this.runs = deps.runs ?? new StudyRunRepository();
+    this.profiles = deps.profiles ?? new PresentationProfileRepository();
     this.research = research;
     this.audit = deps.audit ?? new AuditService(research as ResearchRepository);
     this.baseUrl = deps.baseUrl ?? (() => process.env.APP_URL ?? 'http://localhost:3000');
@@ -59,15 +69,16 @@ export class InvitationService {
   }
 
   /**
-   * Issues `count` invitations for ONE variant of a run. Returns each link once. The first invitation of a run locks it
-   * (`locked: true`). Allowed in any run status and after the quota is reached: the system never decides how many to issue.
+   * Issues `count` invitations for ONE variant of a run. Returns each link once. The first invitation of a run locks both the run
+   * (`locked: true`) and its V2 presentation profile (`status: 'LOCKED'`). Allowed in any run status (once V2 profile is confirmed)
+   * and after the quota is reached: the system never decides how many to issue.
    */
   async create(actor: InvitationActor, payload: unknown): Promise<{ issued: IssuedInvitation[]; auditLogged: boolean }> {
     assertRole(actor, ['RESEARCHER']);
     const input = invitationCreateSchema.parse(payload);
     const run = await this.runs.getById(new ObjectId(input.studyRunId));
     if (!run?._id) throw new StudyRunError('STUDY_RUN_NOT_FOUND', 404);
-    return this.issue(actor, run._id, input.variant, input.count, input.label ?? null, null, run.locked);
+    return this.issue(actor, run, input.variant, input.count, input.label ?? null, null);
   }
 
   /** CAS ISSUED -> REVOKED. A REDEEMED invitation already owns a session and cannot be revoked. */
@@ -93,7 +104,7 @@ export class InvitationService {
     if (original.status === 'ISSUED') throw new StudyRunError('INVITATION_REVOKE_FIRST', 409);
     const run = await this.runs.getById(original.studyRunId);
     if (!run?._id) throw new StudyRunError('STUDY_RUN_NOT_FOUND', 404);
-    const { issued, auditLogged } = await this.issue(actor, run._id, original.variant, 1, input.label ?? original.label, original._id!, run.locked);
+    const { issued, auditLogged } = await this.issue(actor, run, original.variant, 1, input.label ?? original.label, original._id!);
     return { issued: issued[0], auditLogged };
   }
 
@@ -133,13 +144,25 @@ export class InvitationService {
   // ---- internals ---------------------------------------------------------------------------------------------
 
   private async issue(
-    actor: InvitationActor, studyRunId: ObjectId, variant: 'V1' | 'V2', count: number, label: string | null,
-    replaces: ObjectId | null, alreadyLocked: boolean
+    actor: InvitationActor, run: StudyRunDoc, variant: 'V1' | 'V2', count: number, label: string | null,
+    replaces: ObjectId | null
   ): Promise<{ issued: IssuedInvitation[]; auditLogged: boolean }> {
+    const studyRunId = run._id!;
+    const profileId = run.presentation.V2.profileId;
+    if (!profileId) throw new StudyRunError('PRESENTATION_PROFILE_NOT_CONFIRMED', 409);
+    const profile = await this.profiles.getById(profileId);
+    if (!profile || (profile.status !== 'CONFIRMED' && profile.status !== 'LOCKED')) {
+      throw new StudyRunError('PRESENTATION_PROFILE_NOT_CONFIRMED', 409);
+    }
+    if (!profile.contentRevisionId.equals(run.snapshot.contentRevisionId) || profile.version !== run.presentation.V2.version) {
+      throw new StudyRunError('PRESENTATION_PROFILE_CONTENT_MISMATCH', 409);
+    }
+
     const now = this.now();
     const base = this.baseUrl();
     const issued: IssuedInvitation[] = [];
     const docs: InvitationDoc[] = [];
+    // Built in memory only: nothing is written before the profile and the run are locked (below).
     for (let i = 0; i < count; i += 1) {
       const token = generateInvitationToken();
       const _id = new ObjectId();
@@ -149,13 +172,55 @@ export class InvitationService {
       });
       issued.push({ invitationId: _id.toHexString(), variant, token, link: buildInvitationLink(base, token) });
     }
-    await this.invitations.insertMany(docs);
-    let auditLogged = true;
-    if (!alreadyLocked) {
-      // First invitation of the run: lock it (CAS, so only one concurrent creator audits the lock).
-      const locked = await this.runs.lockIfUnlocked(studyRunId);
-      if (locked) auditLogged = (await this.recordRaw(actor, 'STUDY_RUN_LOCKED', 'study_run', studyRunId.toHexString(), { firstInvitationId: docs[0]._id!.toHexString() })) && auditLogged;
+
+    // 1) Lock the V2 profile (CAS CONFIRMED -> LOCKED). From now on no edit of it can succeed (§6.5, AC-14).
+    let lockedProfileNow = false;
+    if (profile.status !== 'LOCKED') {
+      const lockedProfile = await this.profiles.lockIfConfirmed(profileId, now);
+      if (lockedProfile) {
+        lockedProfileNow = true;
+      } else {
+        const recheck = await this.profiles.getById(profileId);
+        if (recheck?.status !== 'LOCKED') throw new StudyRunError('PRESENTATION_PROFILE_NOT_CONFIRMED', 409);
+      }
     }
+
+    // 2) Lock the run (CAS locked: false -> true) bound to EXACTLY the profile and version validated above, and do it BEFORE any
+    //    invitation exists. Another Admin cannot rebind the run once it is locked, and the CAS refuses to lock a run that was
+    //    rebound after we read it, so a session can never be pinned to a profile other than the one that was locked.
+    let lockedRunNow = false;
+    if (!run.locked) {
+      const lockedRun = await this.runs.lockIfUnlocked(studyRunId, { profileId, version: profile.version });
+      if (lockedRun) {
+        lockedRunNow = true;
+      } else {
+        const current = await this.runs.getById(studyRunId);
+        const sameBinding = current?.locked === true
+          && current.presentation.V2.profileId?.equals(profileId) === true
+          && current.presentation.V2.version === profile.version;
+        if (!sameBinding) throw new StudyRunError('PRESENTATION_PROFILE_BINDING_CHANGED', 409);
+      }
+    }
+
+    // 3) Persist. If this fails the locks above stay (idempotent: a retry finds both locked and consistent) and are still audited.
+    let auditLogged = true;
+    const auditLocks = async (firstInvitationId: string | null) => {
+      if (lockedProfileNow) {
+        auditLogged = (await this.recordRaw(actor, 'PRESENTATION_PROFILE_LOCKED', 'presentation_profile', profileId.toHexString(), {
+          studyRunId: studyRunId.toHexString(), firstInvitationId, version: profile.version
+        })) && auditLogged;
+      }
+      if (lockedRunNow) {
+        auditLogged = (await this.recordRaw(actor, 'STUDY_RUN_LOCKED', 'study_run', studyRunId.toHexString(), { firstInvitationId })) && auditLogged;
+      }
+    };
+    try {
+      await this.invitations.insertMany(docs);
+    } catch (error) {
+      await auditLocks(null);
+      throw error;
+    }
+    await auditLocks(docs[0]._id!.toHexString());
     for (const doc of docs) {
       auditLogged = (await this.record(actor, 'INVITATION_ISSUED', doc, {
         studyRunId: studyRunId.toHexString(), variant, replacesInvitationId: replaces ? replaces.toHexString() : null

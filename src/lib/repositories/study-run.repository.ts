@@ -17,7 +17,8 @@ export const STUDY_RUN_ADMIN_WRITABLE_FIELDS = [
   'quotaConfirmedBy',
   'quotaConfirmedAt',
   'entryPolicy',
-  'infoConsentReview'
+  'infoConsentReview',
+  'presentation'
 ] as const;
 
 export type StudyRunAdminUpdate = Partial<Pick<StudyRunDoc, (typeof STUDY_RUN_ADMIN_WRITABLE_FIELDS)[number]>>;
@@ -38,7 +39,11 @@ export interface StudyRunStore {
     guard?: Filter<StudyRunDoc>
   ): Promise<StudyRunDoc | null>;
   /** P2: CAS `locked: false -> true` when the first invitation is issued. Returns the run only when this call did the locking. */
-  lockIfUnlocked(id: ObjectId): Promise<StudyRunDoc | null>;
+  /**
+   * P2/P3: CAS `locked: false -> true`. When `expectedV2` is given the lock also requires the run to still be bound to exactly
+   * that V2 presentation profile and version, so the binding that was validated is the binding that gets frozen (§6.5).
+   */
+  lockIfUnlocked(id: ObjectId, expectedV2?: { profileId: ObjectId; version: number }): Promise<StudyRunDoc | null>;
   /** P2: true when at least one OPEN run chose `legacyEntry = BLOCKED_WHILE_OPEN` (enforced by /api/session). */
   hasOpenRunBlockingLegacyEntry(): Promise<boolean>;
 }
@@ -79,9 +84,12 @@ export class StudyRunRepository implements StudyRunStore {
     );
   }
 
-  async lockIfUnlocked(id: ObjectId): Promise<StudyRunDoc | null> {
+  async lockIfUnlocked(id: ObjectId, expectedV2?: { profileId: ObjectId; version: number }): Promise<StudyRunDoc | null> {
     const { studyRuns } = await collections();
-    return studyRuns.findOneAndUpdate({ _id: id, locked: false }, { $set: { locked: true }, $inc: { version: 1 } }, { returnDocument: 'after' });
+    const filter = expectedV2
+      ? { _id: id, locked: false, 'presentation.V2.profileId': expectedV2.profileId, 'presentation.V2.version': expectedV2.version }
+      : { _id: id, locked: false };
+    return studyRuns.findOneAndUpdate(filter, { $set: { locked: true }, $inc: { version: 1 } }, { returnDocument: 'after' });
   }
 
   async hasOpenRunBlockingLegacyEntry(): Promise<boolean> {

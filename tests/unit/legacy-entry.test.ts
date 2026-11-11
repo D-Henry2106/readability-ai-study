@@ -9,6 +9,8 @@ async function runWith(h: ReturnType<typeof makeHarness>, code: string, legacyEn
   run = (await h.service.confirmQuota(RESEARCHER, id, { expectedVersion: run.version, quotaPerArm: 15 })).run;
   run = (await h.service.confirmEntryPolicy(RESEARCHER, id, { expectedVersion: run.version, legacyEntry })).run;
   run = (await h.service.confirmInfoConsentReview(RESEARCHER, id, { expectedVersion: run.version, statement: INFO_CONSENT_REVIEW_STATEMENT })).run;
+  const profile = await h.confirmDefaultProfile();
+  run = (await h.service.confirmPresentationProfile(RESEARCHER, id, { expectedVersion: run.version, profileId: profile._id!.toHexString() })).run;
   return { id, version: run.version };
 }
 const move = async (h: ReturnType<typeof makeHarness>, id: string, to: 'OPEN' | 'PAUSED' | 'CLOSED') =>

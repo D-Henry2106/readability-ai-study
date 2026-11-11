@@ -36,6 +36,12 @@ export const studyRunInfoConsentSchema = z.object({
   statement: z.literal(INFO_CONSENT_REVIEW_STATEMENT)
 });
 
+/** P3: binds a CONFIRMED (or LOCKED) V2 presentation profile to the Study Run before it opens. */
+export const studyRunPresentationProfileSchema = z.object({
+  expectedVersion: expectedVersionSchema,
+  profileId: z.string().regex(/^[a-fA-F0-9]{24}$/)
+});
+
 export const studyRunTransitionSchema = z.object({
   expectedVersion: expectedVersionSchema,
   to: z.enum(['OPEN', 'PAUSED', 'CLOSED']),

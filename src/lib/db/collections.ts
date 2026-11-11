@@ -19,6 +19,7 @@ import type {
 } from '@/types/research';
 import type { StudyRunDoc } from '@/types/study-run';
 import type { InvitationDoc } from '@/types/invitation';
+import type { PresentationProfileDoc } from '@/types/presentation-profile';
 
 export async function collections(): Promise<{
   sessions: Collection<SessionDoc>;
@@ -38,6 +39,7 @@ export async function collections(): Promise<{
   experimentConfig: Collection<ExperimentConfigDoc>;
   studyRuns: Collection<StudyRunDoc>;
   invitations: Collection<InvitationDoc>;
+  presentationProfiles: Collection<PresentationProfileDoc>;
 }> {
   const db = await getDb();
   return {
@@ -57,6 +59,7 @@ export async function collections(): Promise<{
     rateLimits: db.collection<RateLimitDoc>('rate_limits'),
     experimentConfig: db.collection<ExperimentConfigDoc>('experiment_config'),
     studyRuns: db.collection<StudyRunDoc>('study_runs'),
-    invitations: db.collection<InvitationDoc>('invitations')
+    invitations: db.collection<InvitationDoc>('invitations'),
+    presentationProfiles: db.collection<PresentationProfileDoc>('presentation_profiles')
   };
 }

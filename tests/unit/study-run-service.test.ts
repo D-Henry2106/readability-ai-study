@@ -15,6 +15,8 @@ async function ready(h: Harness) {
   run = (await h.service.confirmQuota(RESEARCHER, id(run), { expectedVersion: run.version, quotaPerArm: 15 })).run;
   run = (await h.service.confirmEntryPolicy(RESEARCHER, id(run), { expectedVersion: run.version, legacyEntry: 'UNCHANGED' })).run;
   run = (await h.service.confirmInfoConsentReview(RESEARCHER, id(run), { expectedVersion: run.version, statement: INFO_CONSENT_REVIEW_STATEMENT })).run;
+  const profile = await h.confirmDefaultProfile();
+  run = (await h.service.confirmPresentationProfile(RESEARCHER, id(run), { expectedVersion: run.version, profileId: profile._id!.toHexString() })).run;
   return run;
 }
 
@@ -128,6 +130,7 @@ describe('AC-02 / AC-03 (P1 part): roles and optimistic locking at service level
       () => h.service.confirmQuota(SUPERVISOR, id(run), { expectedVersion: 1, quotaPerArm: 15 }),
       () => h.service.confirmEntryPolicy(SUPERVISOR, id(run), { expectedVersion: 1, legacyEntry: 'UNCHANGED' }),
       () => h.service.confirmInfoConsentReview(SUPERVISOR, id(run), { expectedVersion: 1, statement: INFO_CONSENT_REVIEW_STATEMENT }),
+      () => h.service.confirmPresentationProfile(SUPERVISOR, id(run), { expectedVersion: 1, profileId: new ObjectId().toHexString() }),
       () => h.service.transition(SUPERVISOR, id(run), { expectedVersion: 1, to: 'OPEN' })
     ];
     for (const call of calls) await expectStudyRunError(call(), 'FORBIDDEN');
@@ -147,6 +150,7 @@ describe('AC-02 / AC-03 (P1 part): roles and optimistic locking at service level
       () => h.service.confirmQuota(RESEARCHER, id(run), { expectedVersion: 1, quotaPerArm: 15 }),
       () => h.service.confirmEntryPolicy(RESEARCHER, id(run), { expectedVersion: 1, legacyEntry: 'UNCHANGED' }),
       () => h.service.confirmInfoConsentReview(RESEARCHER, id(run), { expectedVersion: 1, statement: INFO_CONSENT_REVIEW_STATEMENT }),
+      () => h.service.confirmPresentationProfile(RESEARCHER, id(run), { expectedVersion: 1, profileId: new ObjectId().toHexString() }),
       () => h.service.transition(RESEARCHER, id(run), { expectedVersion: 1, to: 'OPEN' })
     ];
     for (const call of calls) await expectStudyRunError(call(), 'STUDY_RUN_VERSION_CONFLICT', 409);
@@ -244,6 +248,7 @@ describe('AC-26 Information/Consent confirmation', () => {
     expect(details).toContain('INFO_CONSENT_NOT_CONFIRMED');
     expect(details).toContain('QUOTA_NOT_CONFIRMED');
     expect(details).toContain('ENTRY_POLICY_NOT_CONFIRMED');
+    expect(details).toContain('PRESENTATION_PROFILE_NOT_CONFIRMED');
   });
 });
 
@@ -282,20 +287,21 @@ describe('AC-27 StudyRunStatus, entry policy and capability gate', () => {
     expect(changes.map((a) => `${a.metadata!.from}->${a.metadata!.to}`)).toEqual(['DRAFT->OPEN', 'OPEN->PAUSED', 'PAUSED->OPEN', 'OPEN->CLOSED', 'CLOSED->OPEN']);
     expect(changes[changes.length - 1].metadata!.reason).toBe('recruit more');
   });
-  it('production capabilities: only P2 invitationRedemption is true, so a real run still cannot be opened before P3/P4', async () => {
+  it('production capabilities: P2 invitationRedemption and P3 presentationProfile are true; P4 stays false so a real run cannot OPEN yet', async () => {
     expect(STUDY_RUN_CAPABILITIES.invitationRedemption).toBe(true);
-    expect([STUDY_RUN_CAPABILITIES.presentationProfile, STUDY_RUN_CAPABILITIES.singleRoundFlow, STUDY_RUN_CAPABILITIES.quotaRecording].every((v) => v === false)).toBe(true);
+    expect(STUDY_RUN_CAPABILITIES.presentationProfile).toBe(true);
+    expect([STUDY_RUN_CAPABILITIES.singleRoundFlow, STUDY_RUN_CAPABILITIES.quotaRecording].every((v) => v === false)).toBe(true);
     expect(Object.isFrozen(STUDY_RUN_CAPABILITIES)).toBe(true);
     const h = makeHarness();
     const run = await ready(h);
     const { StudyRunService } = await import('@/lib/services/study-run.service');
     const prod = new StudyRunService({ ...h.deps, capabilities: undefined });
     const details = await expectStudyRunError(prod.transition(RESEARCHER, id(run), { expectedVersion: run.version, to: 'OPEN' }), 'STUDY_RUN_NOT_READY', 409);
-    for (const name of ['presentationProfile', 'singleRoundFlow', 'quotaRecording']) expect(details).toContain(`CAPABILITY:${name}`);
-    expect(details.includes('CAPABILITY:invitationRedemption')).toBe(false);
+    for (const name of ['singleRoundFlow', 'quotaRecording']) expect(details).toContain(`CAPABILITY:${name}`);
+    for (const name of ['invitationRedemption', 'presentationProfile']) expect(details.includes(`CAPABILITY:${name}`)).toBe(false);
     expect((await h.service.get(RESEARCHER, id(run))).status).toBe('DRAFT');
   });
-  it('with injected capabilities the open conditions are exactly: quota, entry policy, info/consent, snapshot, capabilities', async () => {
+  it('with injected capabilities the open conditions are: quota, entry policy, info/consent, snapshot, V2 profile, capabilities', async () => {
     const h = makeHarness({ capabilities: { ...ALL_CAPABILITIES, singleRoundFlow: false } });
     const run = await ready(h);
     expect((await h.service.checkOpenReadiness(RESEARCHER, id(run))).missing).toEqual(['CAPABILITY:singleRoundFlow']);

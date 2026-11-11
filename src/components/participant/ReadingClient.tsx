@@ -2,8 +2,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ExperimentalText } from './ExperimentalText';
+import type { PresentationEmphasisSpan } from '@/types/presentation-profile';
 
-export function ReadingClient({ rawContent, presentation, minimumSeconds }: { rawContent: string; presentation: 'V1' | 'V2'; minimumSeconds: number }) {
+export function ReadingClient({
+  rawContent,
+  presentation,
+  minimumSeconds,
+  emphasis,
+  sentencesPerBlock
+}: {
+  rawContent: string;
+  presentation: 'V1' | 'V2';
+  minimumSeconds: number;
+  emphasis?: readonly PresentationEmphasisSpan[];
+  sentencesPerBlock?: number;
+}) {
   const router = useRouter();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -82,7 +95,12 @@ export function ReadingClient({ rawContent, presentation, minimumSeconds }: { ra
   return (
     <div className="stack">
       <div className="reader-frame">
-        <ExperimentalText rawContent={rawContent} presentation={presentation} />
+        <ExperimentalText
+          rawContent={rawContent}
+          presentation={presentation}
+          emphasis={emphasis}
+          sentencesPerBlock={sentencesPerBlock}
+        />
       </div>
       <div className="reader-controls stack-sm">
         <p className="help">Có yêu cầu thời gian đọc tối thiểu. Tải lại trang không đặt lại bộ đếm phía máy chủ. Tối thiểu: {minimumSeconds} giây.</p>

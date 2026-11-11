@@ -10,7 +10,7 @@ describe('redeem: session creation (AC-05, AC-07, AC-10, AC-04)', () => {
   it('creates one pinned session: run, invitation, variant, version, groupCode null, snapshot content', async () => {
     for (const variant of ['V1', 'V2'] as const) {
       const h = makeRedeemHarness();
-      const { runId } = await h.openRun();
+      const { runId, profileId } = await h.openRun();
       const [inv] = await h.issue(runId, variant);
       const result = await redeem(h, inv.token);
       expect(result.outcome).toBe('CREATED');
@@ -20,7 +20,8 @@ describe('redeem: session creation (AC-05, AC-07, AC-10, AC-04)', () => {
       expect(s.studyRunId!.toHexString()).toBe(runId);
       expect(s.invitationId!.toHexString()).toBe(inv.invitationId);
       expect(s.presentationVariant).toBe(variant);
-      expect(s.presentationVersion).toBeNull();
+      expect(s.presentationVersion).toBe(1);
+      expect(variant === 'V2' ? s.presentationProfileId?.toHexString() : s.presentationProfileId).toBe(variant === 'V2' ? profileId : undefined);
       expect(s.groupCode).toBeNull();
       expect(s.status).toBe('ACTIVE');
       expect(s.currentStage).toBe('INFORMATION');

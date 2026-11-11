@@ -37,6 +37,8 @@ export async function ensureIndexes(): Promise<void> {
     c.invitations.createIndex({ studyRunId: 1, variant: 1, status: 1 }),
     c.invitations.createIndex({ sessionId: 1 }, { unique: true, sparse: true }),
     c.sessions.createIndex({ invitationId: 1 }, { unique: true, sparse: true }),
-    c.sessions.createIndex({ studyRunId: 1, presentationVariant: 1, status: 1, validityFlag: 1 })
+    c.sessions.createIndex({ studyRunId: 1, presentationVariant: 1, status: 1, validityFlag: 1 }),
+    // Study Run (P3): unique V2 presentation profile version per content revision.
+    c.presentationProfiles.createIndex({ contentRevisionId: 1, version: 1 }, { unique: true })
   ]);
 }

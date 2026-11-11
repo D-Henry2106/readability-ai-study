@@ -98,17 +98,27 @@ export function makeRedeemHarness(options: { failFirstSessionInsert?: boolean } 
     invitations, runs: base.store, research, runSessions, audit: base.deps.audit, now,
     routeFor: (s) => (s.status === 'ACTIVE' ? `/stage/${s.currentStage}` : '/ended')
   });
-  const admin = new InvitationService({ invitations, runs: base.store, research, audit: base.deps.audit, baseUrl: () => 'https://study.example', now });
+  const admin = new InvitationService({
+    invitations,
+    runs: base.store,
+    profiles: base.profiles,
+    research,
+    audit: base.deps.audit,
+    baseUrl: () => 'https://study.example',
+    now
+  });
 
-  /** A run that is fully confirmed and OPEN (capabilities injected), ready to be redeemed against. */
-  async function openRun(): Promise<{ runId: string; runVersion: number }> {
+  /** A run that is fully confirmed (including its V2 presentation profile) and OPEN, ready to be redeemed against. */
+  async function openRun(): Promise<{ runId: string; runVersion: number; profileId: string }> {
     let run = (await base.service.create(RESEARCHER, { code: 'RUN-01', name: 'Run 01', phase: 'MAIN', packageId: base.packageId.toHexString(), targetSampleSize: 30 })).run;
     const id = run._id!.toHexString();
     run = (await base.service.confirmQuota(RESEARCHER, id, { expectedVersion: run.version, quotaPerArm: 15 })).run;
     run = (await base.service.confirmEntryPolicy(RESEARCHER, id, { expectedVersion: run.version, legacyEntry: 'UNCHANGED' })).run;
     run = (await base.service.confirmInfoConsentReview(RESEARCHER, id, { expectedVersion: run.version, statement: INFO_CONSENT_REVIEW_STATEMENT })).run;
+    const profile = await base.confirmDefaultProfile();
+    run = (await base.service.confirmPresentationProfile(RESEARCHER, id, { expectedVersion: run.version, profileId: profile._id!.toHexString() })).run;
     run = (await base.service.transition(RESEARCHER, id, { expectedVersion: run.version, to: 'OPEN' })).run;
-    return { runId: id, runVersion: run.version };
+    return { runId: id, runVersion: run.version, profileId: profile._id!.toHexString() };
   }
   async function setRunStatus(runId: string, to: 'PAUSED' | 'CLOSED' | 'OPEN') {
     const run = (await base.service.get(RESEARCHER, runId));

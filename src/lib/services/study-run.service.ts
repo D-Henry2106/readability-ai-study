@@ -1,6 +1,10 @@
 import { ObjectId } from 'mongodb';
 import { assertRole } from '@/lib/auth/roles';
 import { ResearchRepository } from '@/lib/repositories/research.repository';
+import {
+  PresentationProfileRepository,
+  type PresentationProfileStore
+} from '@/lib/repositories/presentation-profile.repository';
 import { StudyRunRepository, type StudyRunAdminUpdate, type StudyRunStore } from '@/lib/repositories/study-run.repository';
 import { AuditService } from './audit.service';
 import { PackageService } from './package.service';
@@ -12,6 +16,7 @@ import {
   studyRunCreateSchema,
   studyRunEntryPolicySchema,
   studyRunInfoConsentSchema,
+  studyRunPresentationProfileSchema,
   studyRunQuotaConfirmSchema,
   studyRunSampleSizeSchema,
   studyRunTransitionSchema
@@ -23,10 +28,11 @@ export interface StudyRunActor { username: string; role: AdminRole }
 
 export interface StudyRunServiceDeps {
   store?: StudyRunStore;
+  profiles?: Pick<PresentationProfileStore, 'getById'>;
   research?: Pick<ResearchRepository, 'getConfig' | 'getPackageById' | 'getContentById' | 'getQuestionSetById' | 'addAudit'>;
   packages?: Pick<PackageService, 'verifyPackage'>;
   audit?: Pick<AuditService, 'record'>;
-  /** Production default: every capability false (P1 cannot OPEN a real run). Tests inject true. */
+  /** Production default: singleRoundFlow and quotaRecording stay false until P4. Tests inject true. */
   capabilities?: StudyRunCapabilities;
   now?: () => Date;
 }
@@ -47,12 +53,13 @@ const TRANSITIONS: Record<StudyRunStatus, readonly StudyRunStatus[]> = {
 };
 
 /**
- * Study Run core (P1). Every write requires RESEARCHER and an `expectedVersion` (optimistic locking), and is audited.
- * Nothing here changes status, quota, entry policy or variant on its own, and nothing here writes the `arms` counters.
- * This service is not called from any participant path and does not touch /api/session.
+ * Study Run core (P1 + P3 presentation profile readiness). Every write requires RESEARCHER and an `expectedVersion`
+ * (optimistic locking), and is audited. Nothing here changes status, quota, entry policy or variant on its own, and
+ * nothing here writes the `arms` counters.
  */
 export class StudyRunService {
   private readonly store: StudyRunStore;
+  private readonly profiles: NonNullable<StudyRunServiceDeps['profiles']>;
   private readonly research: NonNullable<StudyRunServiceDeps['research']>;
   private readonly packages: NonNullable<StudyRunServiceDeps['packages']>;
   private readonly audit: NonNullable<StudyRunServiceDeps['audit']>;
@@ -62,6 +69,7 @@ export class StudyRunService {
   constructor(deps: StudyRunServiceDeps = {}) {
     const research = deps.research ?? new ResearchRepository();
     this.store = deps.store ?? new StudyRunRepository();
+    this.profiles = deps.profiles ?? new PresentationProfileRepository();
     this.research = research;
     this.packages = deps.packages ?? new PackageService(research as ResearchRepository);
     this.audit = deps.audit ?? new AuditService(research as ResearchRepository);
@@ -226,6 +234,45 @@ export class StudyRunService {
     return this.result(saved, auditLogged);
   }
 
+  /**
+   * P3: Binds a CONFIRMED (or LOCKED) V2 presentation profile matching the run's snapshotted content revision.
+   * Refused once the run is locked (after the first invitation is issued) or while OPEN.
+   */
+  async confirmPresentationProfile(actor: StudyRunActor, id: string, payload: unknown): Promise<StudyRunWriteResult> {
+    assertRole(actor, ['RESEARCHER']);
+    const input = studyRunPresentationProfileSchema.parse(payload);
+    const run = await this.load(id);
+    this.assertVersion(run, input.expectedVersion);
+    if (run.locked) throw new StudyRunError('STUDY_RUN_LOCKED', 409);
+    if (run.status === 'OPEN') throw new StudyRunError('STUDY_RUN_OPEN_PAUSE_FIRST', 409);
+
+    const profile = await this.profiles.getById(new ObjectId(input.profileId));
+    if (!profile?._id) throw new StudyRunError('PRESENTATION_PROFILE_NOT_FOUND', 404);
+    const content = await this.research.getContentById(run.snapshot.contentRevisionId);
+    if (
+      !profile.contentRevisionId.equals(run.snapshot.contentRevisionId) ||
+      (content?.contentHash && profile.contentHash !== content.contentHash)
+    ) {
+      throw new StudyRunError('PRESENTATION_PROFILE_CONTENT_MISMATCH', 409);
+    }
+    if (profile.status !== 'CONFIRMED' && profile.status !== 'LOCKED') {
+      throw new StudyRunError('PRESENTATION_PROFILE_NOT_CONFIRMED', 409);
+    }
+
+    const saved = await this.commit(
+      run,
+      input.expectedVersion,
+      { presentation: { V1: { version: 1 }, V2: { profileId: profile._id, version: profile.version } } },
+      () => new StudyRunError('STUDY_RUN_LOCKED', 409),
+      { locked: false }
+    );
+    const auditLogged = await this.record(actor, 'STUDY_RUN_PRESENTATION_PROFILE_CONFIRMED', saved, {
+      profileId: profile._id.toHexString(),
+      profileVersion: profile.version
+    });
+    return this.result(saved, auditLogged);
+  }
+
   /** The only way status changes. Always an explicit Admin action; the system never opens, pauses or closes a run. */
   async transition(actor: StudyRunActor, id: string, payload: unknown): Promise<StudyRunWriteResult> {
     assertRole(actor, ['RESEARCHER']);
@@ -314,7 +361,7 @@ export class StudyRunService {
     return problems;
   }
 
-  /** Conditions for OPEN (architecture §3.2). FULL = DRAFT -> OPEN and CLOSED -> OPEN; RESUME = PAUSED -> OPEN. */
+  /** Conditions for OPEN (architecture §3.2, §6.5). FULL = DRAFT -> OPEN and CLOSED -> OPEN; RESUME = PAUSED -> OPEN. */
   private async openMissing(run: StudyRunDoc, mode: 'FULL' | 'RESUME'): Promise<string[]> {
     const missing: string[] = [];
     if (run.quotaPerArm === null || !run.quotaConfirmedAt || run.quotaPerArm * 2 !== run.targetSampleSize) missing.push('QUOTA_NOT_CONFIRMED');
@@ -326,6 +373,24 @@ export class StudyRunService {
     const pkg = await this.research.getPackageById(run.snapshot.packageId);
     if (!pkg) missing.push('SNAPSHOT:PACKAGE_NOT_FOUND');
     else missing.push(...(await this.packageProblems(pkg, { phase: run.phase, snapshot: run.snapshot })).map((p) => `SNAPSHOT:${p}`));
+    const profileId = run.presentation.V2.profileId;
+    if (!profileId) {
+      missing.push('PRESENTATION_PROFILE_NOT_CONFIRMED');
+    } else {
+      const [profile, content] = await Promise.all([
+        this.profiles.getById(profileId),
+        this.research.getContentById(run.snapshot.contentRevisionId)
+      ]);
+      if (!profile || (profile.status !== 'CONFIRMED' && profile.status !== 'LOCKED')) {
+        missing.push('PRESENTATION_PROFILE_NOT_CONFIRMED');
+      } else if (
+        !profile.contentRevisionId.equals(run.snapshot.contentRevisionId) ||
+        profile.version !== run.presentation.V2.version ||
+        (content?.contentHash && profile.contentHash !== content.contentHash)
+      ) {
+        missing.push('PRESENTATION_PROFILE_MISMATCH');
+      }
+    }
     missing.push(...missingCapabilities(this.capabilities).map((name) => `CAPABILITY:${name}`));
     return missing;
   }

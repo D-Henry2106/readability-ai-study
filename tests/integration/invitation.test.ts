@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { resetAndSeedReady, withTestDb } from '../helpers/test-db';
 import { ALL_CAPABILITIES, RESEARCHER } from '../helpers/study-run-fakes';
+import { PresentationProfileService } from '@/lib/services/presentation-profile.service';
 import { StudyRunService } from '@/lib/services/study-run.service';
 import { InvitationService } from '@/lib/services/invitation.service';
 import { InvitationRedemptionService, REDEEM_IN_FLIGHT_MS } from '@/lib/services/invitation-redemption.service';
@@ -19,6 +20,7 @@ vi.mock('@/lib/auth/participant-session', () => ({
 }));
 
 const runs = () => new StudyRunService({ capabilities: ALL_CAPABILITIES });
+const profiles = () => new PresentationProfileService();
 const admin = () => new InvitationService({ baseUrl: () => 'https://study.example' });
 const redeem = (token: string, cookieSessionId: string | null = null) => new InvitationRedemptionService().redeem({ token, deviceType: 'desktop', cookieSessionId });
 
@@ -29,6 +31,17 @@ async function openRun(legacyEntry: 'UNCHANGED' | 'BLOCKED_WHILE_OPEN' = 'UNCHAN
   run = (await runs().confirmQuota(RESEARCHER, id, { expectedVersion: run.version, quotaPerArm: 15 })).run;
   run = (await runs().confirmEntryPolicy(RESEARCHER, id, { expectedVersion: run.version, legacyEntry })).run;
   run = (await runs().confirmInfoConsentReview(RESEARCHER, id, { expectedVersion: run.version, statement: INFO_CONSENT_REVIEW_STATEMENT })).run;
+  const existingProfile = await withTestDb((db) =>
+    db.collection('presentation_profiles').findOne({ contentRevisionId: pkg.contentRevisionId, status: { $in: ['CONFIRMED', 'LOCKED'] } })
+  );
+  let profileId = existingProfile ? String(existingProfile._id) : '';
+  if (!profileId) {
+    const created = await profiles().create(RESEARCHER, { contentRevisionId: String(pkg.contentRevisionId) });
+    profileId = String(created.profile._id);
+    await profiles().preview(RESEARCHER, profileId);
+    await profiles().confirm(RESEARCHER, profileId);
+  }
+  run = (await runs().confirmPresentationProfile(RESEARCHER, id, { expectedVersion: run.version, profileId })).run;
   await runs().transition(RESEARCHER, id, { expectedVersion: run.version, to: 'OPEN' });
   return id;
 }
@@ -60,7 +73,7 @@ describe('Invitations and participant entry on a real MongoDB (P2)', () => {
     expect(stored.status).toBe('REDEEMED');
   });
 
-  it('AC-05/07/10: 20 concurrent redeems -> one session, pinned run/invitation/variant, groupCode null', async () => {
+  it('AC-05/07/10/14: 20 concurrent redeems -> one session, pinned run/invitation/variant/profile, groupCode null, run & profile locked', async () => {
     const runId = await openRun();
     const [inv] = await issue(runId, 'V2');
     const results = await Promise.allSettled(Array.from({ length: 20 }, () => redeem(inv.token)));
@@ -71,12 +84,17 @@ describe('Invitations and participant entry on a real MongoDB (P2)', () => {
     expect(String(s.studyRunId)).toBe(runId);
     expect(String(s.invitationId)).toBe(inv.invitationId);
     expect(s.presentationVariant).toBe('V2');
+    expect(s.presentationVersion).toBe(1);
+    expect(Boolean(s.presentationProfileId)).toBe(true);
     expect(s.groupCode).toBeNull();
     expect(s.currentStage).toBe('INFORMATION');
     const stored = (await withTestDb((db) => db.collection('invitations').findOne({})))!;
     expect(stored.sessionId).toBe(s.id);
-    // the run is locked by the first invitation
-    expect((await runs().get(RESEARCHER, runId)).locked).toBe(true);
+    // the run and its V2 profile are locked by the first invitation
+    const lockedRun = await runs().get(RESEARCHER, runId);
+    expect(lockedRun.locked).toBe(true);
+    const lockedProfile = await profiles().get(RESEARCHER, String(lockedRun.presentation.V2.profileId));
+    expect(lockedProfile.status).toBe('LOCKED');
   });
 
   it('AC-05: a claimed invitation whose session was never written is completed idempotently with the same id', async () => {

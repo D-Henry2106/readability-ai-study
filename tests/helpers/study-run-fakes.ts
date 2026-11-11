@@ -1,13 +1,20 @@
 import { ObjectId } from 'mongodb';
+import { contentHash, countWords } from '@/lib/experiment/content-integrity';
 import type { StudyRunAdminUpdate, StudyRunStore } from '@/lib/repositories/study-run.repository';
+import { PresentationProfileService } from '@/lib/services/presentation-profile.service';
 import { StudyRunService, type StudyRunServiceDeps } from '@/lib/services/study-run.service';
 import type { StudyRunCapabilities } from '@/lib/study-run/capabilities';
-import type { ContentPackageDoc, ExperimentConfigDoc } from '@/types/research';
+import type { PresentationEmphasisSpan, PresentationProfileDoc } from '@/types/presentation-profile';
+import type { ContentPackageDoc, ContentRevisionDoc, ExperimentConfigDoc } from '@/types/research';
 import type { StudyRunDoc } from '@/types/study-run';
+import { FakePresentationProfileStore } from './presentation-profile-fakes';
 
 export const ALL_CAPABILITIES: StudyRunCapabilities = {
   invitationRedemption: true, presentationProfile: true, singleRoundFlow: true, quotaRecording: true
 };
+
+export const FIXTURE_RAW_CONTENT =
+  'First sentence of the fixture passage. Second sentence of the first block. Third sentence starts the second block. Fourth sentence completes the fixture text.';
 
 /** Deep copy that keeps ObjectId (immutable) and Date intact; structuredClone would strip ObjectId's prototype. */
 function clone<T>(value: T): T {
@@ -48,6 +55,10 @@ export class FakeStudyRunStore implements StudyRunStore {
     if (!doc || doc.version !== expectedVersion) return null;
     for (const [path, condition] of Object.entries(guard)) {
       const actual = lookup(doc, path);
+      if (typeof condition !== 'object' || condition === null) {
+        if (actual !== condition) return null;
+        continue;
+      }
       const lte = (condition as { $lte?: number }).$lte;
       if (lte !== undefined && !(typeof actual === 'number' && actual <= lte)) return null;
     }
@@ -56,9 +67,10 @@ export class FakeStudyRunStore implements StudyRunStore {
     this.docs.set(id.toHexString(), next);
     return clone(next);
   }
-  async lockIfUnlocked(id: ObjectId): Promise<StudyRunDoc | null> {
+  async lockIfUnlocked(id: ObjectId, expectedV2?: { profileId: ObjectId; version: number }): Promise<StudyRunDoc | null> {
     const doc = this.docs.get(id.toHexString());
     if (!doc || doc.locked) return null;
+    if (expectedV2 && (!doc.presentation.V2.profileId?.equals(expectedV2.profileId) || doc.presentation.V2.version !== expectedV2.version)) return null;
     const next = { ...doc, locked: true, version: doc.version + 1 };
     this.docs.set(id.toHexString(), next);
     return clone(next);
@@ -87,23 +99,57 @@ export function makeHarness(options: { capabilities?: StudyRunCapabilities; pack
   const pkg = { _id: packageId, code: 'FIXTURE_MAIN', title: 't', topic: 't', description: '', phase: 'MAIN', contentRevisionId: contentId,
     questionSetId, revision: 3, status: 'PUBLISHED', enabled: true, aiSource: null, createdAt: new Date(), updatedAt: new Date(),
     publishedAt: new Date(), archivedAt: null } as ContentPackageDoc;
-  const state = { pkg, config: fixtureConfig(), contentPublished: true, questionsPublished: true, problems: options.packageProblems ?? [] as string[] };
+  const state = {
+    pkg,
+    rawContent: FIXTURE_RAW_CONTENT,
+    config: fixtureConfig(),
+    contentPublished: true,
+    questionsPublished: true,
+    problems: options.packageProblems ?? ([] as string[])
+  };
   const audits: Array<{ username: string; role: string; action: string; targetType: string; targetId?: string | null; metadata?: Record<string, unknown> }> = [];
   const store = new FakeStudyRunStore();
+  const profiles = new FakePresentationProfileStore();
+  const research: NonNullable<StudyRunServiceDeps['research']> = {
+    getConfig: async () => state.config,
+    getPackageById: async (id: ObjectId) => (state.pkg && state.pkg._id?.equals(id) ? state.pkg : null),
+    getContentById: async (id: ObjectId) =>
+      id.equals(contentId)
+        ? ({
+            _id: contentId,
+            revision: 1,
+            topicLabel: 'Fixture topic',
+            rawContent: state.rawContent,
+            contentHash: contentHash(state.rawContent),
+            wordCount: countWords(state.rawContent),
+            status: state.contentPublished ? 'PUBLISHED' : 'DRAFT',
+            locked: state.contentPublished,
+            phase: 'MAIN',
+            createdAt: new Date(0),
+            publishedAt: state.contentPublished ? new Date(0) : null
+          } as ContentRevisionDoc)
+        : null,
+    getQuestionSetById: async () => ({ status: state.questionsPublished ? 'PUBLISHED' : 'DRAFT', locked: state.questionsPublished }) as never,
+    addAudit: async () => undefined
+  };
+  const audit = { record: async (input: (typeof audits)[number]) => { audits.push(input); } };
   const deps: StudyRunServiceDeps = {
     store,
-    research: {
-      getConfig: async () => state.config,
-      getPackageById: async (id: ObjectId) => (state.pkg && state.pkg._id?.equals(id) ? state.pkg : null),
-      getContentById: async () => ({ status: state.contentPublished ? 'PUBLISHED' : 'DRAFT', locked: state.contentPublished }) as never,
-      getQuestionSetById: async () => ({ status: state.questionsPublished ? 'PUBLISHED' : 'DRAFT', locked: state.questionsPublished }) as never,
-      addAudit: async () => undefined
-    },
+    profiles,
+    research,
     packages: { verifyPackage: async () => [...state.problems] },
-    audit: { record: async (input) => { audits.push(input); } },
+    audit,
     capabilities: options.capabilities ?? ALL_CAPABILITIES
   };
-  return { service: new StudyRunService(deps), store, audits, state, packageId, deps };
+  const profileService = new PresentationProfileService({ store: profiles, research, audit });
+  async function confirmDefaultProfile(emphasis: PresentationEmphasisSpan[] = []): Promise<PresentationProfileDoc> {
+    const existing = (await profiles.listByContent(contentId)).find((p) => p.status === 'CONFIRMED' || p.status === 'LOCKED');
+    if (existing && emphasis.length === 0) return existing;
+    const created = await profileService.create(RESEARCHER, { contentRevisionId: contentId.toHexString(), emphasis });
+    await profileService.preview(RESEARCHER, created.profile._id!.toHexString());
+    return (await profileService.confirm(RESEARCHER, created.profile._id!.toHexString())).profile;
+  }
+  return { service: new StudyRunService(deps), profileService, store, profiles, audits, state, packageId, contentId, deps, confirmDefaultProfile };
 }
 
 export async function expectStudyRunError(work: Promise<unknown>, code: string, status?: number): Promise<string[]> {

@@ -12,12 +12,19 @@ export class ReadingService {
   }
 
   async start(session: SessionDoc, renderedAt?: Date) {
-    if (!session.groupCode) throw new Error('GROUP_NOT_ASSIGNED');
     const roundNo = this.roundFromStage(session.currentStage);
+    let presentation: 'V1' | 'V2';
+    if (session.studyRunId) {
+      if (!session.presentationVariant) throw new Error('VARIANT_NOT_ASSIGNED');
+      presentation = session.presentationVariant;
+    } else {
+      if (!session.groupCode) throw new Error('GROUP_NOT_ASSIGNED');
+      presentation = presentationForRound(session.groupCode, roundNo);
+    }
     return this.repo.createReadingIfMissing({
       sessionId: session.id,
       roundNo,
-      presentation: presentationForRound(session.groupCode, roundNo),
+      presentation,
       renderedAt: renderedAt ?? null,
       nextClickedAt: null,
       startedAt: new Date(),
