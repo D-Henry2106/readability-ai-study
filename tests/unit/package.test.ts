@@ -169,6 +169,40 @@ describe('content package integrity and assignment', () => {
     expect(content.locked).toBe(true);
   });
 
+  it('accepts a V2 that only changes formatting and stores sanitized content', async () => {
+    const { repo, contentDocs } = makeTestRepo();
+    const service = new PackageService(repo);
+    const id = await service.createDraft({
+      code: 'AI_02', title: 'AI Package', topic: 'AI Topic', phase: 'PILOT',
+      rawContent: 'Title. First sentence. Second sentence.',
+      v2Content: '<h2>Title.</h2><p onclick="x()">First <strong>sentence.</strong></p><script>x()</script><p>Second sentence.</p>'
+    });
+    const published = await service.publish(id.toHexString());
+    const content = contentDocs.get(published.contentRevisionId.toHexString());
+    expect(content.v2Content).not.toMatch(/script|onclick/i);
+    expect(content.status).toBe('PUBLISHED');
+  });
+
+  it('rejects creating or publishing a V2 whose wording differs from V1', async () => {
+    const { repo, contentDocs } = makeTestRepo();
+    const service = new PackageService(repo);
+    await expect(service.createDraft({
+      code: 'AI_03', title: 'AI Package', topic: 'AI Topic', phase: 'PILOT',
+      rawContent: 'Title. First sentence. Second sentence.',
+      v2Content: '<p>Title. First sentence. Third sentence.</p>'
+    })).rejects.toThrow('LEXICAL_INTEGRITY_FAILED');
+
+    const id = await service.createDraft({
+      code: 'AI_04', title: 'AI Package', topic: 'AI Topic', phase: 'PILOT',
+      rawContent: 'Title. First sentence. Second sentence.',
+      v2Content: '<p>Title. First sentence. Second sentence.</p>'
+    });
+    const pkg = (await repo.getPackageById(id))!;
+    const content = contentDocs.get(pkg.contentRevisionId.toHexString());
+    content.v2Content = '<p>Title. First sentence. Changed.</p>'; // simulate tampering after save
+    await expect(service.publish(id.toHexString())).rejects.toThrow('PACKAGE_INVALID:V1_V2_TEXT_MISMATCH');
+  });
+
   it('rejects invalid content during verify and creation', async () => {
     const { repo } = makeTestRepo();
     const service = new PackageService(repo);

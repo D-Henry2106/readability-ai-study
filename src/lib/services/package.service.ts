@@ -1,6 +1,7 @@
 import { ObjectId } from 'mongodb';
 import { randomInt } from 'node:crypto';
 import { ResearchRepository } from '@/lib/repositories/research.repository';
+import { sameWording, sanitizeRichField } from '@/lib/html-text';
 import { ContentService } from './content.service';
 import { contentHash, verifyLexicalIntegrity } from '@/lib/experiment/content-integrity';
 import { accessibleVisualBlocks, hasExactAccessiblePresentationIntegrity } from '@/lib/experiment/presentation';
@@ -19,16 +20,28 @@ export function selectPackage<T extends { _id?: ObjectId }>(eligible: T[], mode:
   return selected;
 }
 
+function assertWording(rawContent: string, v2Content: string | null | undefined): void {
+  if (v2Content?.trim()) {
+    if (!sameWording(rawContent, v2Content)) throw new Error('LEXICAL_INTEGRITY_FAILED');
+  } else if (!validatePresentation(rawContent)) {
+    throw new Error('LEXICAL_INTEGRITY_FAILED');
+  }
+}
+
+function cleanInput<T extends { rawContent: string; v2Content?: string | null }>(input: T): T {
+  return { ...input, rawContent: sanitizeRichField(input.rawContent), v2Content: input.v2Content ? sanitizeRichField(input.v2Content) : input.v2Content };
+}
+
 export class PackageService {
   constructor(private readonly repo = new ResearchRepository()) {}
 
   async checklist(pkg: ContentPackageDoc) {
     const content = await this.repo.getContentById(pkg.contentRevisionId);
-    const hasV2Custom = !!content?.v2Content || !!pkg.v2Content;
+    const v2 = content?.v2Content || pkg.v2Content || null;
     const rules = [
       { code: 'METADATA', label: 'Mã, tiêu đề, chủ đề và phase', pass: !!pkg.code && !!pkg.title && !!pkg.topic && ['PILOT','MAIN'].includes(pkg.phase) },
       { code: 'RAW_CONTENT', label: 'Bài đọc và hash văn bản nguồn', pass: !!content && content.phase === pkg.phase && !!content.rawContent.trim() && content.contentHash === contentHash(content.rawContent) },
-      { code: 'LEXICAL_INTEGRITY', label: 'Toàn vẹn ký tự V1/V2', pass: !!content && (hasV2Custom || validatePresentation(content.rawContent)) },
+      { code: 'LEXICAL_INTEGRITY', label: 'Toàn vẹn ký tự V1/V2', pass: !!content && (v2?.trim() ? sameWording(content.rawContent, v2) : validatePresentation(content.rawContent)) },
       { code: 'REVISION_LOCK', label: 'Các revision đã khóa khi xuất bản', pass: pkg.status === 'DRAFT' ? !!content && !content.locked : !!content?.locked },
       { code: 'PUBLICATION', label: 'Trạng thái publication khớp', pass: pkg.status === 'DRAFT' ? !!content && content.status === 'DRAFT' : !!content && content.status === 'PUBLISHED' }
     ];
@@ -39,16 +52,18 @@ export class PackageService {
   async verifyPackage(pkg: ContentPackageDoc): Promise<string[]> {
     const problems: string[] = [];
     const content = await this.repo.getContentById(pkg.contentRevisionId);
-    const hasV2Custom = !!content?.v2Content || !!pkg.v2Content;
+    const v2 = content?.v2Content || pkg.v2Content || null;
+    const hasV2Custom = !!v2?.trim();
     if (!content || content.phase !== pkg.phase || !content.rawContent.trim() || content.contentHash !== contentHash(content.rawContent)) problems.push('INVALID_CONTENT');
     if (!hasV2Custom && content?.rawContent && !validatePresentation(content.rawContent)) problems.push('INVALID_CONTENT');
+    if (hasV2Custom && content && !sameWording(content.rawContent, v2!)) problems.push('V1_V2_TEXT_MISMATCH');
     if (!pkg.code || !pkg.title || !pkg.topic || !['PILOT', 'MAIN'].includes(pkg.phase)) problems.push('INVALID_METADATA');
     return problems;
   }
 
   async createDraft(payload: unknown): Promise<ObjectId> {
-    const input = packageInputSchema.parse(payload);
-    if (!input.v2Content && !validatePresentation(input.rawContent)) throw new Error('LEXICAL_INTEGRITY_FAILED');
+    const input = cleanInput(packageInputSchema.parse(payload));
+    assertWording(input.rawContent, input.v2Content);
 
     const code = input.code.toUpperCase();
     const revision = await this.repo.nextPackageRevision(code);
@@ -80,11 +95,11 @@ export class PackageService {
   }
 
   async updateDraft(id: string, payload: unknown): Promise<ContentPackageDoc> {
-    const input = packageInputSchema.parse(payload);
+    const input = cleanInput(packageInputSchema.parse(payload));
     const pkg = await this.repo.getPackageById(new ObjectId(id));
     if (!pkg || pkg.status !== 'DRAFT') throw new Error('PACKAGE_NOT_EDITABLE');
     if (input.code.toUpperCase() !== pkg.code || input.phase !== pkg.phase) throw new Error('PACKAGE_NOT_EDITABLE');
-    if (!input.v2Content && !validatePresentation(input.rawContent)) throw new Error('LEXICAL_INTEGRITY_FAILED');
+    assertWording(input.rawContent, input.v2Content);
 
     const content = await this.repo.getContentById(pkg.contentRevisionId);
     if (!content || content.status !== 'DRAFT' || content.locked) throw new Error('PACKAGE_NOT_EDITABLE');

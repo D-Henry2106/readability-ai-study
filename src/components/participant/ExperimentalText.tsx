@@ -29,7 +29,7 @@ export function ExperimentalText({
   }
 
   // V2 Presentation with study-run emphasis spans
-  if (emphasis && emphasis.length > 0) {
+  if (emphasis && emphasis.length > 0 && !contentIsHtml) {
     const blocks = buildV2VisualBlocks(rawContent, { emphasis, sentencesPerBlock });
     return (
       <div className="experimental-text reader-v2">
