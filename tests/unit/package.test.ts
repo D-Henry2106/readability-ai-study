@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, expect, it } from 'vitest';
 import { ObjectId } from 'mongodb';
 import { selectPackage, PackageService, validatePresentation } from '@/lib/services/package.service';
