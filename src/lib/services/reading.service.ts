@@ -5,17 +5,21 @@ import type { SessionDoc } from '@/types/research';
 export class ReadingService {
   constructor(private readonly repo = new ResearchRepository()) {}
 
-  private roundFromStage(stage: SessionDoc['currentStage']): 1 | 2 {
+  private roundFromStage(stage: SessionDoc['currentStage'], isStudyRun = false): 1 | 2 {
     if (stage === 'READING_1') return 1;
-    if (stage === 'READING_2') return 2;
+    if (!isStudyRun && stage === 'READING_2') return 2;
     throw new Error('INVALID_READING_STAGE');
   }
 
   async start(session: SessionDoc, renderedAt?: Date) {
-    const roundNo = this.roundFromStage(session.currentStage);
+    const isStudyRun = Boolean(session.studyRunId);
+    const roundNo = this.roundFromStage(session.currentStage, isStudyRun);
     let presentation: 'V1' | 'V2';
-    if (session.studyRunId) {
+    if (isStudyRun) {
       if (!session.presentationVariant) throw new Error('VARIANT_NOT_ASSIGNED');
+      if (typeof session.presentationVersion !== 'number' || !Number.isInteger(session.presentationVersion) || session.presentationVersion < 1) {
+        throw new Error('PRESENTATION_VERSION_NOT_ASSIGNED');
+      }
       presentation = session.presentationVariant;
     } else {
       if (!session.groupCode) throw new Error('GROUP_NOT_ASSIGNED');
@@ -25,6 +29,7 @@ export class ReadingService {
       sessionId: session.id,
       roundNo,
       presentation,
+      ...(isStudyRun ? { presentationVersion: session.presentationVersion } : {}),
       renderedAt: renderedAt ?? null,
       nextClickedAt: null,
       startedAt: new Date(),
@@ -36,7 +41,7 @@ export class ReadingService {
   }
 
   async finish(session: SessionDoc, input: { nextClickedAt?: Date; scrollCount: number; maxScrollDepthPercent: number }) {
-    const roundNo = this.roundFromStage(session.currentStage);
+    const roundNo = this.roundFromStage(session.currentStage, Boolean(session.studyRunId));
     const reading = await this.repo.getReading(session.id, roundNo);
     if (!reading) throw new Error('READING_NOT_STARTED');
     if (reading.finishedAt) return { reading, remainingSeconds: 0 };

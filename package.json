@@ -19,6 +19,7 @@
     "test:e2e": "playwright test",
     "test:db:setup": "tsx scripts/test-db-setup.ts",
     "test:db:reset": "tsx scripts/test-db-reset.ts",
+    "db:clean:dev": "tsx scripts/clean-dev-db.ts",
     "create-admin": "tsx scripts/create-admin.ts",
     "db:indexes": "tsx scripts/create-indexes.ts",
     "db:check": "tsx scripts/check-db.ts",

@@ -22,6 +22,7 @@ export async function ensureIndexes(): Promise<void> {
     c.contentRevisions.createIndex({ phase: 1, status: 1, revision: -1 }),
     c.questionSets.createIndex({ phase: 1, status: 1, revision: -1 }),
     c.adminAudit.createIndex({ createdAt: -1 }),
+    c.adminAudit.createIndex({ dedupeKey: 1 }, { unique: true, partialFilterExpression: { dedupeKey: { $type: 'string' } } }),
     c.experimentConfig.createIndex({ key: 1 }, { unique: true }),
     // Auth/security collections (no research data): lookups by token hash, TTL cleanup one day after expiry.
     c.adminSessions.createIndex({ tokenHash: 1 }, { unique: true }),

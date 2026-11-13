@@ -11,6 +11,7 @@ export default async function Page() {
   const isStudyRun = Boolean(session.studyRunId);
   if (!isStudyRun && !session.groupCode) throw new Error('Chưa có phân nhóm thực nghiệm.');
   if (isStudyRun && !session.presentationVariant) throw new Error('Chưa có phiên bản hiển thị.');
+  if (isStudyRun && session.currentStage !== 'READING_1') throw new Error('Bước đọc không hợp lệ cho phiên nghiên cứu một lượt.');
   const repo = new ResearchRepository();
   const content = await repo.getContentById(session.contentRevisionId);
   const config = session.minimumReadingSeconds ? null : await repo.getConfig();
@@ -25,9 +26,14 @@ export default async function Page() {
     throw new Error('Hồ sơ hiển thị V2 hiện không khả dụng.');
   }
   return (
-    <ParticipantShell step={roundNo === 1 ? 4 : 7} title={`Lượt đọc ${roundNo}`} wide>
+    <ParticipantShell
+      step={isStudyRun ? 4 : roundNo === 1 ? 4 : 7}
+      total={isStudyRun ? 6 : 9}
+      title={isStudyRun ? 'Bài đọc' : `Lượt đọc ${roundNo}`}
+      wide
+    >
       <ReadingClient
-        rawContent={content.rawContent}
+        rawContent={(presentation === 'V2' && content.v2Content) ? content.v2Content : content.rawContent}
         presentation={presentation}
         minimumSeconds={minimumReadingSeconds}
         emphasis={profile?.emphasis}

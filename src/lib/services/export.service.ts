@@ -42,8 +42,32 @@ export class ExportService {
       for (const answer of test.answers) rows.push(line([
         test.sessionId, session.phase, session.groupCode, session.assignedPackageId?.toString(), session.assignedPackageCode, session.assignedPackageRevision, session.assignedPackageTopic, session.status, session.validityFlag,
         test.roundNo, test.presentation, test.questionSetId.toString(), answer.questionId,
-        answer.selectedOptionId, answer.isCorrect, test.score, 5, test.submittedAt
+        answer.selectedOptionId, answer.isCorrect, test.score, test.answers.length, test.submittedAt
       ]));
+    }
+    return rows.join('\n');
+  }
+
+  /**
+   * P5: one row per Study Run participant (single-round design). Filter with `variant` to get the V1 file and the V2 file separately;
+   * the variant is the invitation's, copied onto the session at redeem time. Legacy two-round sessions have no studyRunId and are skipped.
+   * The score is out of `score_max` (the attempt's own question count: 15 for P5 question sets, 5 for older data).
+   */
+  async run(phase?: StudyPhase, filters: ResearchFilters = {}): Promise<string> {
+    const sessions = (await this.repo.listAllSessionsForExport(phase, filters)).filter((s) => s.studyRunId);
+    const rows = [line(['session_id','participant_id','invitation_id','study_run_id','variant','presentation_version','question_set_id','question_set_revision',
+      'package_code','package_revision','status','validity','device','age_range','gender','field_of_study','year_of_study','ai_usage_frequency','online_reading_frequency',
+      'reading_seconds','scroll_count','max_scroll_depth_percent','score','score_max','answers','created_at','completed_at'])];
+    for (const session of sessions) {
+      const bundle = await this.repo.getSessionBundle(session.id);
+      const reading = bundle.readings.find((r) => r.roundNo === 1);
+      const test = bundle.tests.find((t) => t.roundNo === 1);
+      rows.push(line([session.id, session.participantId, session.invitationId?.toHexString(), session.studyRunId?.toHexString(), session.presentationVariant, session.presentationVersion,
+        session.questionSetId.toHexString(), session.questionSetRevision, session.assignedPackageCode, session.assignedPackageRevision, session.status, session.validityFlag, session.deviceType,
+        bundle.demographics?.ageRange, bundle.demographics?.gender, bundle.demographics?.fieldOfStudy, bundle.demographics?.yearOfStudy, bundle.demographics?.aiUsageFrequency, bundle.demographics?.onlineReadingFrequency,
+        reading?.readingSeconds, reading?.scrollCount, reading?.maxScrollDepthPercent, test?.score, test?.answers.length,
+        test ? JSON.stringify(test.answers.map((a) => ({ questionId: a.questionId, selectedOptionId: a.selectedOptionId, isCorrect: a.isCorrect }))) : null,
+        session.createdAt, session.completedAt]));
     }
     return rows.join('\n');
   }
@@ -51,9 +75,9 @@ export class ExportService {
   async events(phase?: StudyPhase, filters: ResearchFilters = {}): Promise<string> {
     const [events, sessions] = await Promise.all([this.repo.listEventData(phase, filters), this.repo.listAllSessionsForExport(phase, filters)]);
     const byId = new Map(sessions.map(s => [s.id, s]));
-    const rows = [line(['session_id','package_id','package_code','package_revision','package_topic','event_id','event_type','round_no','stage','server_timestamp'])];
+    const rows = [line(['session_id','package_id','package_code','package_revision','package_topic','event_id','event_type','round_no','stage','server_timestamp','participant_id','invitation_id','variant'])];
     for (const e of events) { const s = byId.get(e.sessionId);
-      rows.push(line([e.sessionId, s?.assignedPackageId?.toString(), s?.assignedPackageCode, s?.assignedPackageRevision, s?.assignedPackageTopic, e._id?.toString(), e.type, e.roundNo, e.stage, e.createdAt]));
+      rows.push(line([e.sessionId, s?.assignedPackageId?.toString(), s?.assignedPackageCode, s?.assignedPackageRevision, s?.assignedPackageTopic, e._id?.toString(), e.type, e.roundNo, e.stage, e.createdAt, s?.participantId, s?.invitationId?.toHexString(), s?.presentationVariant]));
     }
     return rows.join('\n');
   }

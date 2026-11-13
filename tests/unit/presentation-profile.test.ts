@@ -19,7 +19,13 @@ import { INFO_CONSENT_REVIEW_STATEMENT } from '@/lib/validation/study-run-schema
 import type { PresentationEmphasisSpan } from '@/types/presentation-profile';
 import type { QuestionSetDoc, ReadingSessionDoc, SessionDoc } from '@/types/research';
 import { DEVICE, expectCode, makeRedeemHarness } from '../helpers/invitation-fakes';
-import { expectStudyRunError, FIXTURE_RAW_CONTENT, makeHarness, RESEARCHER, SUPERVISOR } from '../helpers/study-run-fakes';
+import {
+  expectStudyRunError,
+  FIXTURE_RAW_CONTENT,
+  makeHarness,
+  RESEARCHER,
+  SUPERVISOR
+} from '../helpers/study-run-fakes';
 
 function spanOf(rawContent: string, phrase: string, fromIndex = 0): PresentationEmphasisSpan {
   const start = rawContent.indexOf(phrase, fromIndex);
@@ -40,7 +46,10 @@ function reactNodeText(node: unknown): string {
 }
 
 /** Collects every element tag and text of `<strong>` nodes from a React element tree. */
-function inspectReactTree(node: unknown, out: { tags: string[]; strongs: string[] } = { tags: [], strongs: [] }) {
+function inspectReactTree(
+  node: unknown,
+  out: { tags: string[]; strongs: string[] } = { tags: [], strongs: [] }
+) {
   if (!node || typeof node !== 'object') return out;
   if (Array.isArray(node)) {
     for (const child of node) inspectReactTree(child, out);
@@ -65,7 +74,11 @@ describe('AC-11: V1 unchanged; V1 and V2 share content revision, question set, s
     expect(v1.textContent).toBe(raw);
     expect(v1.boldSegments).toEqual([]);
     expect(extractTextContentFromHtml(v1.html)).toBe(raw);
-    const tree = ExperimentalText({ rawContent: raw, presentation: 'V1', emphasis: [spanOf(raw, 'fixture passage')] });
+    const tree = ExperimentalText({
+      rawContent: raw,
+      presentation: 'V1',
+      emphasis: [spanOf(raw, 'fixture passage')]
+    });
     expect(reactNodeText(tree)).toBe(raw);
     const inspected = inspectReactTree(tree);
     expect(inspected.tags).toEqual(['div']);
@@ -77,8 +90,12 @@ describe('AC-11: V1 unchanged; V1 and V2 share content revision, question set, s
     const { runId, profileId } = await h.openRun();
     const [invV1] = await h.issue(runId, 'V1', 1);
     const [invV2] = await h.issue(runId, 'V2', 1);
-    const r1 = await h.redemption().redeem({ token: invV1.token, deviceType: DEVICE, cookieSessionId: null });
-    const r2 = await h.redemption().redeem({ token: invV2.token, deviceType: DEVICE, cookieSessionId: null });
+    const r1 = await h
+      .redemption()
+      .redeem({ token: invV1.token, deviceType: DEVICE, cookieSessionId: null });
+    const r2 = await h
+      .redemption()
+      .redeem({ token: invV2.token, deviceType: DEVICE, cookieSessionId: null });
     const s1 = h.sessions.get(r1.sessionId)!;
     const s2 = h.sessions.get(r2.sessionId)!;
 
@@ -103,10 +120,17 @@ describe('AC-11: V1 unchanged; V1 and V2 share content revision, question set, s
       questions: Array.from({ length: 5 }, (_, i) => ({
         id: `q${i + 1}`,
         prompt: `Question ${i + 1}?`,
-        options: Array.from({ length: 4 }, (_, j) => ({ id: `q${i + 1}o${j + 1}`, text: `Option ${j + 1}`, isCorrect: j === 0 }))
+        options: Array.from({ length: 4 }, (_, j) => ({
+          id: `q${i + 1}o${j + 1}`,
+          text: `Option ${j + 1}`,
+          isCorrect: j === 0
+        }))
       }))
     };
-    const answers = questionSet.questions.map((q, idx) => ({ questionId: q.id, selectedOptionId: idx < 3 ? q.options[0].id : q.options[1].id }));
+    const answers = questionSet.questions.map((q, idx) => ({
+      questionId: q.id,
+      selectedOptionId: idx < 3 ? q.options[0].id : q.options[1].id
+    }));
     const scoreV1 = new ScoringService().score(questionSet, answers);
     const scoreV2 = new ScoringService().score(questionSet, answers);
     expect(scoreV1).toEqual(scoreV2);
@@ -142,8 +166,22 @@ describe('AC-11: V1 unchanged; V1 and V2 share content revision, question set, s
       withdrawnAt: null
     } satisfies SessionDoc;
 
-    await svc.start({ ...baseSession, id: 'run-v1', studyRunId: new ObjectId(), presentationVariant: 'V1' });
-    await svc.start({ ...baseSession, id: 'run-v2', studyRunId: new ObjectId(), presentationVariant: 'V2' });
+    await svc.start({
+      ...baseSession,
+      id: 'run-v1',
+      studyRunId: new ObjectId(),
+      presentationVariant: 'V1',
+      presentationVersion: 1
+    });
+
+    await svc.start({
+      ...baseSession,
+      id: 'run-v2',
+      studyRunId: new ObjectId(),
+      presentationVariant: 'V2',
+      presentationVersion: 1
+    });
+
     await svc.start({ ...baseSession, id: 'legacy-a', groupCode: 'A' });
     await svc.start({ ...baseSession, id: 'legacy-b', groupCode: 'B' });
 
@@ -249,7 +287,9 @@ describe('AC-13: manual emphasis only; valid offsets, non-overlapping; empty sel
 
   it('rejects out-of-range offsets, reversed/empty offsets, surrogate splits, text mismatches, blank spans and overlaps', () => {
     expect(validateEmphasisSpans(raw, [{ start: -1, end: 5, text: 'First' }]).ok).toBe(false);
-    expect(validateEmphasisSpans(raw, [{ start: 0, end: raw.length + 1, text: raw + 'x' }]).ok).toBe(false);
+    expect(
+      validateEmphasisSpans(raw, [{ start: 0, end: raw.length + 1, text: raw + 'x' }]).ok
+    ).toBe(false);
     expect(validateEmphasisSpans(raw, [{ start: 5, end: 5, text: '' }]).ok).toBe(false);
     expect(validateEmphasisSpans(raw, [{ start: 8, end: 5, text: 'abc' }]).ok).toBe(false);
 
@@ -274,15 +314,22 @@ describe('AC-13: manual emphasis only; valid offsets, non-overlapping; empty sel
 
     const emojiText = 'A 🧪 B';
     // '🧪' is at UTF-16 code units [2, 4); splitting at 3 splits the surrogate pair
-    const splitSurrogate = validateEmphasisSpans(emojiText, [{ start: 0, end: 3, text: emojiText.slice(0, 3) }]);
-    expect(splitSurrogate).toMatchObject({ ok: false, code: 'PRESENTATION_EMPHASIS_OFFSET_OUT_OF_RANGE' });
+    const splitSurrogate = validateEmphasisSpans(emojiText, [
+      { start: 0, end: 3, text: emojiText.slice(0, 3) }
+    ]);
+    expect(splitSurrogate).toMatchObject({
+      ok: false,
+      code: 'PRESENTATION_EMPHASIS_OFFSET_OUT_OF_RANGE'
+    });
   });
 });
 
 describe('AC-14 & §6.5: PresentationProfileService preview, confirmation, StudyRun readiness and locking on first invitation', () => {
   it('creates a DRAFT profile (version 1, empty emphasis by default) and requires Preview before Confirm', async () => {
     const h = makeHarness();
-    const { profile } = await h.profileService.create(RESEARCHER, { contentRevisionId: h.contentId.toHexString() });
+    const { profile } = await h.profileService.create(RESEARCHER, {
+      contentRevisionId: h.contentId.toHexString()
+    });
     expect(profile.version).toBe(1);
     expect(profile.variant).toBe('V2');
     expect(profile.status).toBe('DRAFT');
@@ -324,7 +371,9 @@ describe('AC-14 & §6.5: PresentationProfileService preview, confirmation, Study
 
   it('editing a CONFIRMED profile (before lock) resets it to DRAFT and requires a fresh Preview + Confirm', async () => {
     const h = makeHarness();
-    const { profile } = await h.profileService.create(RESEARCHER, { contentRevisionId: h.contentId.toHexString() });
+    const { profile } = await h.profileService.create(RESEARCHER, {
+      contentRevisionId: h.contentId.toHexString()
+    });
     const pid = profile._id!.toHexString();
     await h.profileService.preview(RESEARCHER, pid);
     await h.profileService.confirm(RESEARCHER, pid);
@@ -336,7 +385,11 @@ describe('AC-14 & §6.5: PresentationProfileService preview, confirmation, Study
     expect(updated.profile.confirmedAt).toBeNull();
     expect(updated.profile.emphasis).toEqual([span]);
 
-    await expectStudyRunError(h.profileService.confirm(RESEARCHER, pid), 'PRESENTATION_PROFILE_PREVIEW_REQUIRED', 409);
+    await expectStudyRunError(
+      h.profileService.confirm(RESEARCHER, pid),
+      'PRESENTATION_PROFILE_PREVIEW_REQUIRED',
+      409
+    );
     const preview2 = await h.profileService.preview(RESEARCHER, pid);
     expect(preview2.v2.boldSegments).toEqual(['fixture passage']);
     const confirmed2 = await h.profileService.confirm(RESEARCHER, pid);
@@ -345,7 +398,9 @@ describe('AC-14 & §6.5: PresentationProfileService preview, confirmation, Study
 
   it('enforces RESEARCHER role on all profile writes; SUPERVISOR is FORBIDDEN', async () => {
     const h = makeHarness();
-    const { profile } = await h.profileService.create(RESEARCHER, { contentRevisionId: h.contentId.toHexString() });
+    const { profile } = await h.profileService.create(RESEARCHER, {
+      contentRevisionId: h.contentId.toHexString()
+    });
     const pid = profile._id!.toHexString();
     await h.profileService.preview(RESEARCHER, pid);
 
@@ -356,32 +411,62 @@ describe('AC-14 & §6.5: PresentationProfileService preview, confirmation, Study
     ];
     for (const call of calls) await expectStudyRunError(call(), 'FORBIDDEN');
     expect((await h.profileService.get(SUPERVISOR, pid)).status).toBe('DRAFT');
-    expect(await h.profileService.listByContent(SUPERVISOR, h.contentId.toHexString())).toHaveLength(1);
+    expect(
+      await h.profileService.listByContent(SUPERVISOR, h.contentId.toHexString())
+    ).toHaveLength(1);
   });
 
   it('Study Run cannot OPEN without a CONFIRMED/LOCKED V2 profile, nor if the bound profile was edited back to DRAFT', async () => {
     const h = makeHarness();
-    let run = (await h.service.create(RESEARCHER, {
-      code: 'RUN-P3',
-      name: 'Run P3',
-      phase: 'MAIN',
-      packageId: h.packageId.toHexString(),
-      targetSampleSize: 30
-    })).run;
+    let run = (
+      await h.service.create(RESEARCHER, {
+        code: 'RUN-P3',
+        name: 'Run P3',
+        phase: 'MAIN',
+        packageId: h.packageId.toHexString(),
+        targetSampleSize: 30
+      })
+    ).run;
     const runId = run._id!.toHexString();
-    run = (await h.service.confirmQuota(RESEARCHER, runId, { expectedVersion: run.version, quotaPerArm: 15 })).run;
-    run = (await h.service.confirmEntryPolicy(RESEARCHER, runId, { expectedVersion: run.version, legacyEntry: 'UNCHANGED' })).run;
-    run = (await h.service.confirmInfoConsentReview(RESEARCHER, runId, { expectedVersion: run.version, statement: INFO_CONSENT_REVIEW_STATEMENT })).run;
+    run = (
+      await h.service.confirmQuota(RESEARCHER, runId, {
+        expectedVersion: run.version,
+        quotaPerArm: 15
+      })
+    ).run;
+    run = (
+      await h.service.confirmEntryPolicy(RESEARCHER, runId, {
+        expectedVersion: run.version,
+        legacyEntry: 'UNCHANGED'
+      })
+    ).run;
+    run = (
+      await h.service.confirmInfoConsentReview(RESEARCHER, runId, {
+        expectedVersion: run.version,
+        statement: INFO_CONSENT_REVIEW_STATEMENT
+      })
+    ).run;
 
     // No profile bound yet
-    expect((await h.service.checkOpenReadiness(RESEARCHER, runId)).missing).toEqual(['PRESENTATION_PROFILE_NOT_CONFIRMED']);
-    await expectStudyRunError(h.service.transition(RESEARCHER, runId, { expectedVersion: run.version, to: 'OPEN' }), 'STUDY_RUN_NOT_READY', 409);
+    expect((await h.service.checkOpenReadiness(RESEARCHER, runId)).missing).toEqual([
+      'PRESENTATION_PROFILE_NOT_CONFIRMED'
+    ]);
+    await expectStudyRunError(
+      h.service.transition(RESEARCHER, runId, { expectedVersion: run.version, to: 'OPEN' }),
+      'STUDY_RUN_NOT_READY',
+      409
+    );
 
     // Cannot bind a DRAFT profile
-    const { profile } = await h.profileService.create(RESEARCHER, { contentRevisionId: h.contentId.toHexString() });
+    const { profile } = await h.profileService.create(RESEARCHER, {
+      contentRevisionId: h.contentId.toHexString()
+    });
     const pid = profile._id!.toHexString();
     await expectStudyRunError(
-      h.service.confirmPresentationProfile(RESEARCHER, runId, { expectedVersion: run.version, profileId: pid }),
+      h.service.confirmPresentationProfile(RESEARCHER, runId, {
+        expectedVersion: run.version,
+        profileId: pid
+      }),
       'PRESENTATION_PROFILE_NOT_CONFIRMED',
       409
     );
@@ -389,17 +474,31 @@ describe('AC-14 & §6.5: PresentationProfileService preview, confirmation, Study
     // Preview + confirm + bind
     await h.profileService.preview(RESEARCHER, pid);
     await h.profileService.confirm(RESEARCHER, pid);
-    run = (await h.service.confirmPresentationProfile(RESEARCHER, runId, { expectedVersion: run.version, profileId: pid })).run;
-    expect(run.presentation).toEqual({ V1: { version: 1 }, V2: { profileId: profile._id, version: 1 } });
+    run = (
+      await h.service.confirmPresentationProfile(RESEARCHER, runId, {
+        expectedVersion: run.version,
+        profileId: pid
+      })
+    ).run;
+    expect(run.presentation).toEqual({
+      V1: { version: 1 },
+      V2: { profileId: profile._id, version: 1 }
+    });
 
     // If edited back to DRAFT before OPEN, readiness blocks OPEN again
-    await h.profileService.updateEmphasis(RESEARCHER, pid, { emphasis: [spanOf(h.state.rawContent, 'First sentence')] });
-    expect((await h.service.checkOpenReadiness(RESEARCHER, runId)).missing).toEqual(['PRESENTATION_PROFILE_NOT_CONFIRMED']);
+    await h.profileService.updateEmphasis(RESEARCHER, pid, {
+      emphasis: [spanOf(h.state.rawContent, 'First sentence')]
+    });
+    expect((await h.service.checkOpenReadiness(RESEARCHER, runId)).missing).toEqual([
+      'PRESENTATION_PROFILE_NOT_CONFIRMED'
+    ]);
 
     // Re-preview and re-confirm -> OPEN succeeds
     await h.profileService.preview(RESEARCHER, pid);
     await h.profileService.confirm(RESEARCHER, pid);
-    run = (await h.service.transition(RESEARCHER, runId, { expectedVersion: run.version, to: 'OPEN' })).run;
+    run = (
+      await h.service.transition(RESEARCHER, runId, { expectedVersion: run.version, to: 'OPEN' })
+    ).run;
     expect(run.status).toBe('OPEN');
   });
 
@@ -438,7 +537,10 @@ describe('AC-14 & §6.5: PresentationProfileService preview, confirmation, Study
     await h.setRunStatus(runId, 'PAUSED');
     const paused = await h.service.get(RESEARCHER, runId);
     await expectStudyRunError(
-      h.service.confirmPresentationProfile(RESEARCHER, runId, { expectedVersion: paused.version, profileId }),
+      h.service.confirmPresentationProfile(RESEARCHER, runId, {
+        expectedVersion: paused.version,
+        profileId
+      }),
       'STUDY_RUN_LOCKED',
       409
     );
@@ -455,13 +557,15 @@ describe('AC-14 & §6.5: PresentationProfileService preview, confirmation, Study
 
   it('refuses to issue invitations if the run has no confirmed V2 profile', async () => {
     const h = makeRedeemHarness();
-    const run = (await h.service.create(RESEARCHER, {
-      code: 'RUN-UNCONFIRMED',
-      name: 'Unconfirmed',
-      phase: 'MAIN',
-      packageId: h.packageId.toHexString(),
-      targetSampleSize: 20
-    })).run;
+    const run = (
+      await h.service.create(RESEARCHER, {
+        code: 'RUN-UNCONFIRMED',
+        name: 'Unconfirmed',
+        phase: 'MAIN',
+        packageId: h.packageId.toHexString(),
+        targetSampleSize: 20
+      })
+    ).run;
     await expectCode(
       h.admin.create(RESEARCHER, { studyRunId: run._id!.toHexString(), variant: 'V1', count: 1 }),
       'PRESENTATION_PROFILE_NOT_CONFIRMED',

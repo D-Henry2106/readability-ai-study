@@ -1455,3 +1455,168 @@ details summary {
 @media (forced-colors: active) {
   .admin-layout .admin-nav-link.is-active, .package-wizard .wizard-steps .wizard-active, .package-state, .admin-toast { border: 1px solid CanvasText; }
 }
+
+/* Professional SaaS Admin Layout & Workflow Components */
+.grid-2col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+@media (max-width: 900px) {
+  .grid-2col {
+    grid-template-columns: 1fr;
+  }
+}
+
+.admin-page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.admin-workflow-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.admin-workflow-card {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.admin-workflow-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+.admin-workflow-card h4 {
+  margin: 10px 0 4px;
+  font-size: 1rem;
+  color: #0f172a;
+}
+
+.admin-workflow-stat {
+  margin: 14px 0 16px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.admin-workflow-stat strong {
+  font-size: 1.6rem;
+  color: #0f172a;
+  line-height: 1;
+}
+.admin-workflow-stat small {
+  color: #64748b;
+  font-size: 0.8rem;
+}
+
+.admin-compact-select {
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background-color: #fff;
+  color: #1e293b;
+}
+
+.admin-side-brand strong {
+  font-size: 0.95rem;
+  color: #0f172a;
+}
+
+.admin-nav-heading {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 14px 12px 6px;
+  margin: 0;
+}
+
+.admin-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.88rem;
+  color: #475569;
+  text-decoration: none;
+  border-radius: 8px;
+  padding: 9px 12px;
+  transition: background 0.15s, color 0.15s;
+}
+.admin-nav-link:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+.admin-nav-link.is-active {
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 600;
+  border-left: 3px solid #2563eb;
+}
+
+.admin-user-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.admin-user-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: #e2e8f0;
+  color: #1e293b;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 0.82rem;
+}
+.admin-user-details strong {
+  display: block;
+  font-size: 0.85rem;
+  color: #0f172a;
+}
+.admin-user-details small {
+  display: block;
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.package-linked-qs strong {
+  color: #0f172a;
+  font-size: 0.88rem;
+}
+
+.package-selected-qs-card {
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  border-radius: 10px;
+  padding: 16px;
+}
+.package-selected-qs-card h4 {
+  margin: 4px 0 2px;
+  color: #1e3a8a;
+  font-size: 1.05rem;
+}
+
+.package-qs-details {
+  margin-top: 10px;
+  font-size: 0.85rem;
+  color: #1e40af;
+  cursor: pointer;
+}
+.package-preview-questions {
+  margin-top: 8px;
+  padding-left: 20px;
+  font-size: 0.82rem;
+  color: #334155;
+  line-height: 1.6;
+}
+

@@ -7,7 +7,7 @@ export default async function Page() {
   const session = await requireParticipantPage('COMPLETED');
   const c = await new ResearchRepository().getConfig();
   return (
-    <ParticipantShell step={9} title="Hoàn thành nghiên cứu" allowWithdraw={false}>
+    <ParticipantShell step={6} total={6} title="Hoàn thành nghiên cứu" allowWithdraw={false}>
       <p>
         <strong>Cảm ơn bạn đã tham gia.</strong>
       </p>

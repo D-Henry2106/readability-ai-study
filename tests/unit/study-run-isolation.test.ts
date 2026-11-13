@@ -14,7 +14,7 @@ function walk(dir: string): string[] {
 }
 const rel = (file: string) => path.relative(process.cwd(), file).split(path.sep).join('/');
 
-// The only files allowed to know about Study Runs / invitations / presentation profiles (P1 + P2 + P3).
+// The only files allowed to know about Study Runs / invitations / presentation profiles / quota (P1 + P2 + P3 + P4).
 const ALLOWED = new Set([
   'src/types/study-run.ts',
   'src/lib/study-run/capabilities.ts',
@@ -49,6 +49,37 @@ const ALLOWED = new Set([
   'src/components/participant/ExperimentalText.tsx',
   'src/app/experiment/reading/page.tsx',
   'src/lib/services/reading.service.ts',
+  // P4: single-round completion, participant UI, run-session validity checklist, and quota recording service
+  'src/lib/services/study-run-quota.service.ts',
+  'src/lib/repositories/research.repository.ts',
+  'src/app/api/test/submit/route.ts',
+  'src/app/experiment/review/page.tsx',
+  'src/app/experiment/test/page.tsx',
+  'src/lib/services/validity.service.ts',
+  'src/lib/services/validity-review.service.ts',
+  // P5: admin-only Study Run management (pages, admin APIs, components, variant lock) and run/variant export columns.
+  // None of these is part of the participant flow; the legacy core is verified clean by the next test.
+  'src/app/admin/(protected)/study-runs/page.tsx',
+  'src/app/admin/(protected)/invitations/page.tsx',
+  'src/app/admin/(protected)/questions/page.tsx',
+  'src/app/admin/(protected)/sessions/page.tsx',
+  'src/app/admin/(protected)/sessions/[id]/page.tsx',
+  'src/app/admin/(protected)/statistics/page.tsx',
+  'src/app/admin/(protected)/exports/page.tsx',
+  'src/app/api/admin/study-runs/route.ts',
+  'src/app/api/admin/study-runs/[id]/route.ts',
+  'src/app/api/admin/invitations/route.ts',
+  'src/app/api/admin/variant-locks/route.ts',
+  'src/components/admin/AdminSidebar.tsx',
+  'src/components/admin/StudyRunManager.tsx',
+  'src/components/admin/InvitationManager.tsx',
+  'src/components/admin/QuestionManager.tsx',
+  'src/lib/services/variant-lock.service.ts',
+  'src/lib/services/export.service.ts',
+  'src/lib/services/export-request.service.ts',
+  'src/lib/services/research-filters.ts',
+  'src/lib/services/analysis.service.ts',
+  'src/lib/http.ts',
   // P2: the specified integration points in existing files (each checked individually below)
   'src/app/api/session/route.ts',
   'src/app/api/demographics/route.ts',
@@ -71,7 +102,12 @@ describe('Study Run isolation: legacy flow only touches the specified integratio
       'src/lib/services/scoring.service.ts',
       'src/lib/auth/participant-session.ts',
       'src/lib/auth/participant-guard.ts',
-      'src/lib/services/assignment.service.ts'
+      'src/lib/services/assignment.service.ts',
+      // Shared question contract and legacy scoring/analysis/validation must never depend on Study Run code or wording.
+      'src/lib/questions/question-spec.ts',
+      'src/lib/services/analysis.service.ts',
+      'src/lib/services/question.service.ts',
+      'src/lib/validation/schemas.ts'
     ]) {
       expect(/study[-_ ]?run|studyRun|invitation|presentationProfile/i.test(readFileSync(path.resolve(process.cwd(), file), 'utf8'))).toBe(false);
     }
@@ -84,17 +120,48 @@ describe('Study Run isolation: legacy flow only touches the specified integratio
     expect(demographics.includes('session.studyRunId')).toBe(true);
     expect(/invitation|study_runs/i.test(demographics)).toBe(false);
   });
-  it('reading page and ReadingService branch only on session.studyRunId while preserving presentationForRound for legacy sessions', () => {
+  it('reading, review and test pages and ReadingService branch only on session.studyRunId while preserving legacy 2-round UI', () => {
     const page = readFileSync(path.resolve(process.cwd(), 'src/app/experiment/reading/page.tsx'), 'utf8');
     expect(page.includes('presentationForRound(session.groupCode!, roundNo)')).toBe(true);
     expect(page.includes('session.studyRunId')).toBe(true);
+    const reviewPage = readFileSync(path.resolve(process.cwd(), 'src/app/experiment/review/page.tsx'), 'utf8');
+    expect(reviewPage.includes('session.studyRunId')).toBe(true);
+    expect(reviewPage.includes('Trước phần câu hỏi — lượt')).toBe(true);
+    const testPage = readFileSync(path.resolve(process.cwd(), 'src/app/experiment/test/page.tsx'), 'utf8');
+    expect(testPage.includes('session.studyRunId')).toBe(true);
+    expect(testPage.includes('Câu hỏi — lượt')).toBe(true);
     const readingService = readFileSync(path.resolve(process.cwd(), 'src/lib/services/reading.service.ts'), 'utf8');
     expect(readingService.includes('presentationForRound(session.groupCode, roundNo)')).toBe(true);
     expect(readingService.includes('session.studyRunId')).toBe(true);
   });
-  it('the Study Run repository has no general update and no counter write (only CAS update, the P2 lock and the legacy-entry lookup)', () => {
+  it('P4 single-round and validity integration points preserve completeSessionIfReady and checkValidity for legacy sessions', () => {
+    const repo = readFileSync(path.resolve(process.cwd(), 'src/lib/repositories/research.repository.ts'), 'utf8');
+    expect(repo.includes('async completeSessionIfReady(id: string)')).toBe(true);
+    expect(repo.includes("currentStage: 'TEST_2', status: 'ACTIVE'")).toBe(true);
+    expect(repo.includes('async completeRunSessionIfReady(id: string)')).toBe(true);
+    const submit = readFileSync(path.resolve(process.cwd(), 'src/app/api/test/submit/route.ts'), 'utf8');
+    expect(submit.includes('if (existingSession.studyRunId)')).toBe(true);
+    expect(submit.includes('repo.completeRunSessionIfReady(id)')).toBe(true);
+    expect(submit.includes('repo.completeSessionIfReady(id)')).toBe(true);
+    const validity = readFileSync(path.resolve(process.cwd(), 'src/lib/services/validity.service.ts'), 'utf8');
+    expect(validity.includes('export function checkValidity(')).toBe(true);
+    expect(validity.includes('export function checkRunSessionValidity(')).toBe(true);
+    const review = readFileSync(path.resolve(process.cwd(), 'src/lib/services/validity-review.service.ts'), 'utf8');
+    expect(review.includes('if (bundle.session.studyRunId)')).toBe(true);
+    expect(review.includes('checkRunSessionValidity(')).toBe(true);
+    expect(review.includes('checkValidity(')).toBe(true);
+  });
+  it('the Study Run repository has no general update (only CAS admin update, the P2 lock, the legacy-entry lookup and the narrow P4 quota counter CAS)', () => {
     const methods = Object.getOwnPropertyNames(StudyRunRepository.prototype).filter((m) => m !== 'constructor').sort();
-    expect(methods).toEqual(['getById', 'hasOpenRunBlockingLegacyEntry', 'insert', 'list', 'lockIfUnlocked', 'updateIfVersion']);
+    expect(methods).toEqual([
+      'applyQuotaCounterTransition',
+      'getById',
+      'hasOpenRunBlockingLegacyEntry',
+      'insert',
+      'list',
+      'lockIfUnlocked',
+      'updateIfVersion'
+    ]);
     for (const forbidden of ['arms', 'snapshot', 'code', 'locked', 'version', 'createdBy', 'createdAt', '_id']) {
       expect((STUDY_RUN_ADMIN_WRITABLE_FIELDS as readonly string[]).includes(forbidden)).toBe(false);
     }

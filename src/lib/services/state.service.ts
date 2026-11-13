@@ -8,10 +8,10 @@ const routeForStage: Record<ExperimentStage, string> = {
   READING_1: '/experiment/reading',
   REVIEW_1: '/experiment/review',
   TEST_1: '/experiment/test',
-  BREAK: '/experiment/break',
-  READING_2: '/experiment/reading',
-  REVIEW_2: '/experiment/review',
-  TEST_2: '/experiment/test',
+  BREAK: '/complete',
+  READING_2: '/complete',
+  REVIEW_2: '/complete',
+  TEST_2: '/complete',
   COMPLETED: '/complete'
 };
 

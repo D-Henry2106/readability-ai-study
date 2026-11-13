@@ -3,6 +3,7 @@ import { MongoClient, ObjectId, type Db } from 'mongodb';
 import { requireTestMongoUri } from './test-mongo-env';
 import { contentHash } from '@/lib/experiment/content-integrity';
 import { ensureIndexes } from '@/lib/db/indexes';
+import { makeQuestions } from './question-fixtures';
 
 
 // One pooled client per worker (a new connection per call made every test several seconds slower under load).
@@ -39,7 +40,7 @@ export async function resetAndSeedReady(options?: { existingGroup?: 'A' | 'B' })
     const packageId = new ObjectId();
     await db.collection('experiment_config').insertOne({ key:'active', phase:'MAIN', studyPublished:true, assignmentMode:'FIXED', fixedPackageId:packageId.toHexString(), mainRandomApproved:false, informationText:'Fixture participant information.', informationVersion:'test-info-v1', consentText:'Fixture consent text for automated testing.', consentVersion:'test-consent-v1', debriefText:'Fixture debrief text.', debriefVersion:'test-debrief-v1', dataRightsText:'Fixture data rights text.', findingsText:'Fixture findings information.', minimumReadingSeconds:1, minimumValidTarget:40, recruitmentTarget:60, updatedAt:now });
     await db.collection('content_revisions').insertOne({ _id:contentId, revision:1, topicLabel:'Test fixture', rawContent:'This is fixture experimental content used only in the isolated automated test database.', contentHash:contentHash('This is fixture experimental content used only in the isolated automated test database.'), wordCount:13, status:'PUBLISHED', locked:true, phase:'MAIN', createdAt:now, publishedAt:now });
-    await db.collection('question_sets').insertOne({ _id:questionSetId, revision:1, label:'Test fixture', questions:Array.from({length:5},(_,i)=>({id:`q${i+1}`,prompt:`Fixture question ${i+1}?`,options:Array.from({length:4},(_,j)=>({id:`q${i+1}o${j+1}`,text:`Fixture option ${j+1}`,isCorrect:j===0}))})), status:'PUBLISHED', locked:true, phase:'MAIN', createdAt:now, publishedAt:now });
+    await db.collection('question_sets').insertOne({ _id:questionSetId, revision:1, label:'Test fixture', questions:makeQuestions(), status:'PUBLISHED', locked:true, phase:'MAIN', createdAt:now, publishedAt:now });
     await db.collection('content_packages').insertOne({_id:packageId,code:'FIXTURE_MAIN',title:'Automated fixture',topic:'AI comprehension',description:'',phase:'MAIN',contentRevisionId:contentId,questionSetId,revision:1,status:'PUBLISHED',enabled:true,aiSource:null,createdAt:now,updatedAt:now,publishedAt:now,archivedAt:null});
     if (options?.existingGroup) {
       await db.collection('sessions').insertOne({ id:`fixture-existing-${options.existingGroup}`, status:'COMPLETED', currentStage:'COMPLETED', groupCode:options.existingGroup, assignedPackageId:packageId, assignedPackageRevision:1, assignedPackageCode:'FIXTURE_MAIN', assignedPackageTopic:'AI comprehension', packageAssignmentMethod:'FIXED', packageAssignedAt:now, contentRevisionId:contentId, questionSetId, informationVersion:'test-info-v1', consentVersion:'test-consent-v1', debriefVersion:'test-debrief-v1', phase:'MAIN', deviceType:'desktop', validityFlag:'VALID', validityReason:null, createdAt:now, updatedAt:now, completedAt:now, withdrawnAt:null });

@@ -74,6 +74,15 @@ export class FakeInvitationStore implements InvitationAdminStore, InvitationRede
   }
 }
 
+/** In-memory per-variant lock store (same contract as ResearchRepository.getVariantLocks / setVariantLock). */
+export class FakeVariantLocks {
+  readonly locks: Record<'V1' | 'V2', { locked: boolean; changedBy: string | null; changedAt: Date | null }> = {
+    V1: { locked: false, changedBy: null, changedAt: null }, V2: { locked: false, changedBy: null, changedAt: null }
+  };
+  async getVariantLocks() { return structuredClone(this.locks); }
+  async setVariantLock(variant: 'V1' | 'V2', locked: boolean, by: string, at: Date) { this.locks[variant] = { locked, changedBy: by, changedAt: at }; }
+}
+
 /** Run-aware research fake: sessions with the same unique-id behaviour as the real `sessions` collection. */
 export function makeRedeemHarness(options: { failFirstSessionInsert?: boolean } = {}) {
   const base = makeHarness({ capabilities: ALL_CAPABILITIES });
@@ -92,10 +101,11 @@ export function makeRedeemHarness(options: { failFirstSessionInsert?: boolean } 
     }
   };
   const invitations = new FakeInvitationStore();
+  const variantLocks = new FakeVariantLocks();
   const now = () => new Date(clock.now.getTime());
   const runSessions = new RunSessionService({ research, events: { add: async (sessionId, type) => { events.push({ sessionId, type }); } }, now });
   const redemption = () => new InvitationRedemptionService({
-    invitations, runs: base.store, research, runSessions, audit: base.deps.audit, now,
+    invitations, runs: base.store, research, locks: variantLocks, runSessions, audit: base.deps.audit, now,
     routeFor: (s) => (s.status === 'ACTIVE' ? `/stage/${s.currentStage}` : '/ended')
   });
   const admin = new InvitationService({
@@ -103,14 +113,15 @@ export function makeRedeemHarness(options: { failFirstSessionInsert?: boolean } 
     runs: base.store,
     profiles: base.profiles,
     research,
+    locks: variantLocks,
     audit: base.deps.audit,
     baseUrl: () => 'https://study.example',
     now
   });
 
   /** A run that is fully confirmed (including its V2 presentation profile) and OPEN, ready to be redeemed against. */
-  async function openRun(): Promise<{ runId: string; runVersion: number; profileId: string }> {
-    let run = (await base.service.create(RESEARCHER, { code: 'RUN-01', name: 'Run 01', phase: 'MAIN', packageId: base.packageId.toHexString(), targetSampleSize: 30 })).run;
+  async function openRun(options: { questionSetId?: string; code?: string } = {}): Promise<{ runId: string; runVersion: number; profileId: string }> {
+    let run = (await base.service.create(RESEARCHER, { code: options.code ?? 'RUN-01', name: 'Run 01', phase: 'MAIN', packageId: base.packageId.toHexString(), targetSampleSize: 30, ...(options.questionSetId ? { questionSetId: options.questionSetId } : {}) })).run;
     const id = run._id!.toHexString();
     run = (await base.service.confirmQuota(RESEARCHER, id, { expectedVersion: run.version, quotaPerArm: 15 })).run;
     run = (await base.service.confirmEntryPolicy(RESEARCHER, id, { expectedVersion: run.version, legacyEntry: 'UNCHANGED' })).run;
@@ -127,7 +138,7 @@ export function makeRedeemHarness(options: { failFirstSessionInsert?: boolean } 
   async function issue(runId: string, variant: 'V1' | 'V2' = 'V1', count = 1) {
     return (await admin.create(RESEARCHER, { studyRunId: runId, variant, count })).issued;
   }
-  return { ...base, sessions, events, clock, flags, research, invitations, runSessions, redemption, admin, openRun, setRunStatus, issue };
+  return { ...base, variantLocks, sessions, events, clock, flags, research, invitations, runSessions, redemption, admin, openRun, setRunStatus, issue };
 }
 
 export async function expectCode(work: Promise<unknown>, code: string, status?: number): Promise<void> {

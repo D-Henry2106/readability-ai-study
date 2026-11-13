@@ -18,18 +18,32 @@ const reading = (roundNo: 1 | 2, started: number): ReadingSessionDoc => ({ sessi
 const attempt = (roundNo: 1 | 2, started: number, misses: number): TestAttemptDoc => ({ sessionId: session.id, roundNo, questionSetId: questionId, presentation: roundNo === 1 ? 'V1' : 'V2',
   startedAt: at(started), submittedAt: at(started + 30), score: 5 - misses,
   answers: questions.questions.map((q, i) => ({ questionId: q.id, selectedOptionId: `${q.id}o${i < misses ? 1 : 0}`, isCorrect: i >= misses })) });
-const event = (type: ExperimentEventDoc['type'], roundNo?: 1 | 2): ExperimentEventDoc => ({ sessionId: session.id, type, roundNo, createdAt: now });
+const event = (type: ExperimentEventDoc['type'], roundNo?: 1 | 2 | null): ExperimentEventDoc => ({ sessionId: session.id, type, roundNo: roundNo ?? null, createdAt: now });
 const evidence: ValidityBundle = { session, questions,
   consent: { sessionId: session.id, informationVersion: 'I1', consentVersion: 'C1', decision: 'ACCEPTED', decidedAt: now },
   readings: [reading(1, 30), reading(2, 500)], tests: [attempt(1, 140, 1), attempt(2, 600, 0)],
   breakDoc: { sessionId: session.id, startedAt: at(170), finishedAt: at(300) },
-  events: [event('SESSION_STARTED'), event('SESSION_COMPLETED'), ...([1,2] as const).flatMap(r => [event('READING_STARTED', r), event('READING_FINISHED', r), event('TEST_STARTED', r), event('TEST_SUBMITTED', r)])] };
+  events: [event('SESSION_STARTED', null), event('SESSION_COMPLETED', null), ...([1,2] as const).flatMap(r => [event('READING_STARTED', r), event('READING_FINISHED', r), event('TEST_STARTED', r), event('TEST_SUBMITTED', r)])] };
 describe('Validity — historical PILOT fixture (not production data)', () => {
-  it('retains 4/5 and 5/5 and passes complete server evidence without auto-validating', () => {
+  it('retains 4/5 and 5/5 and passes complete server evidence (with MongoDB roundNo: null for session events) without auto-validating', () => {
     const report = checkValidity(evidence);
     expect(report.eligible).toBe(true);
     expect(session.validityFlag).toBe('REVIEW_REQUIRED');
     expect(evidence.tests.map(t => t.score)).toEqual([4,5]);
+  });
+  it('accepts both null and undefined roundNo for session-level events, while rejecting duplicate or round-mismatched events', () => {
+    const withUndefinedSessionEvents = {
+      ...evidence,
+      events: evidence.events.map((e) => (e.roundNo === null ? { ...e, roundNo: undefined } : e))
+    };
+    expect(checkValidity(withUndefinedSessionEvents).eligible).toBe(true);
+    const duplicateStarted = { ...evidence, events: [...evidence.events, event('SESSION_STARTED', null)] };
+    expect(checkValidity(duplicateStarted).checks.find((c) => c.code === 'EVENTS')?.status).toBe('REVIEW_REQUIRED');
+    const wrongRoundReading = {
+      ...evidence,
+      events: evidence.events.map((e) => (e.type === 'READING_STARTED' && e.roundNo === 2 ? { ...e, roundNo: 1 as const } : e))
+    };
+    expect(checkValidity(wrongRoundReading).checks.find((c) => c.code === 'EVENTS')?.status).toBe('REVIEW_REQUIRED');
   });
   it('flags insufficient reading time', () => {
     const readings = evidence.readings.map((r,i) => i === 0 ? { ...r, readingSeconds: 4, finishedAt: at(34) } : r);

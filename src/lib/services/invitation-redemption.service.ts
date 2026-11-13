@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { ResearchRepository } from '@/lib/repositories/research.repository';
 import { InvitationRedemptionRepository, type InvitationRedemptionStore } from '@/lib/repositories/invitation.repository';
+import type { VariantLockStore } from '@/lib/repositories/research.repository';
 import { StudyRunRepository, type StudyRunStore } from '@/lib/repositories/study-run.repository';
 import { AuditService } from './audit.service';
 import { RunSessionService } from './run-session.service';
@@ -32,6 +33,8 @@ export interface RedemptionDeps {
   invitations?: InvitationRedemptionStore;
   runs?: Pick<StudyRunStore, 'getById'>;
   research?: Pick<ResearchRepository, 'getSession'>;
+  /** P5-D: per-variant intake lock. Defaults to the research repository. */
+  locks?: Pick<VariantLockStore, 'getVariantLocks'>;
   runSessions?: Pick<RunSessionService, 'build' | 'persist'>;
   audit?: Pick<AuditService, 'record'>;
   routeFor?: (session: SessionDoc) => string;
@@ -54,6 +57,7 @@ export class InvitationRedemptionService {
   private readonly invitations: InvitationRedemptionStore;
   private readonly runs: NonNullable<RedemptionDeps['runs']>;
   private readonly research: NonNullable<RedemptionDeps['research']>;
+  private readonly locks: NonNullable<RedemptionDeps['locks']>;
   private readonly runSessions: NonNullable<RedemptionDeps['runSessions']>;
   private readonly audit: NonNullable<RedemptionDeps['audit']>;
   private readonly routeFor: (session: SessionDoc) => string;
@@ -66,6 +70,7 @@ export class InvitationRedemptionService {
     this.invitations = deps.invitations ?? new InvitationRedemptionRepository();
     this.runs = deps.runs ?? new StudyRunRepository();
     this.research = research;
+    this.locks = deps.locks ?? new ResearchRepository();
     this.runSessions = deps.runSessions ?? new RunSessionService();
     this.audit = deps.audit ?? new AuditService();
     this.routeFor = deps.routeFor ?? ((s) => new ExperimentStateService(research as ResearchRepository).routeFor(s));
@@ -86,6 +91,9 @@ export class InvitationRedemptionService {
   private async redeemIssued(invitation: InvitationDoc, input: RedeemInput, cookieSession: SessionDoc | null): Promise<RedeemResult> {
     const run = await this.runs.getById(invitation.studyRunId);
     if (!run || run.status !== 'OPEN') throw unavailable();
+    // P5-D: a locked variant redeems no UNUSED invitation. Only here: resume/recovery of an already started session (redeemUsed)
+    // and test submit never look at the lock, so participants who started before the lock can still finish.
+    if ((await this.locks.getVariantLocks())[invitation.variant].locked) throw unavailable();
     // A browser that already holds another ACTIVE session is refused BEFORE the invitation is consumed (one person, one link).
     if (cookieSession?.status === 'ACTIVE') throw browserBusy();
     const sessionId = this.newSessionId();

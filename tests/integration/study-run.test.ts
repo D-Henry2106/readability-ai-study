@@ -12,7 +12,8 @@ const service = () => new StudyRunService({ capabilities: ALL_CAPABILITIES });
 const profiles = () => new PresentationProfileService();
 let packageId: string;
 let contentId: string;
-const input = (over: Record<string, unknown> = {}) => ({ code: 'run-01', name: 'Run 01', phase: 'MAIN', packageId, targetSampleSize: 30, ...over });
+let questionSetId: string;
+const input = (over: Record<string, unknown> = {}) => ({ code: 'run-01', name: 'Run 01', phase: 'MAIN', packageId, questionSetId, targetSampleSize: 30, ...over });
 const runs = () => withTestDb((db) => db.collection('study_runs').find({}).toArray());
 const audits = () => withTestDb((db) => db.collection('admin_audit').find({ targetType: 'study_run' }).sort({ createdAt: 1 }).toArray());
 const hex = (id?: ObjectId) => id!.toHexString();
@@ -29,6 +30,7 @@ describe('Study Run core on a real MongoDB (P1)', () => {
   beforeEach(async () => {
     const seeded = await resetAndSeedReady();
     contentId = String(seeded.contentId);
+    questionSetId = String(seeded.questionSetId);
     packageId = String((await withTestDb((db) => db.collection('content_packages').findOne({ code: 'FIXTURE_MAIN' })))!._id);
   });
 
@@ -112,23 +114,26 @@ describe('Study Run core on a real MongoDB (P1)', () => {
     expect((await runs())[0].status).toBe('DRAFT');
   });
 
-  it('AC-27: full lifecycle with injected capabilities; production capabilities (P4 still false) refuse OPEN', async () => {
+  it('AC-27: full lifecycle with production capabilities (all four true in P4); missing capabilities still refuse OPEN', async () => {
     const { run } = await service().create(RESEARCHER, input());
     let v = (await service().confirmQuota(RESEARCHER, hex(run._id), { expectedVersion: 1, quotaPerArm: 15 })).run.version;
     v = (await service().confirmEntryPolicy(RESEARCHER, hex(run._id), { expectedVersion: v, legacyEntry: 'BLOCKED_WHILE_OPEN' })).run.version;
     v = (await service().confirmInfoConsentReview(RESEARCHER, hex(run._id), { expectedVersion: v, statement: INFO_CONSENT_REVIEW_STATEMENT })).run.version;
     v = await confirmAndBindProfile(hex(run._id), v);
-    const production = new StudyRunService();
-    const details = await expectStudyRunError(production.transition(RESEARCHER, hex(run._id), { expectedVersion: v, to: 'OPEN' }), 'STUDY_RUN_NOT_READY', 409);
+    const gated = new StudyRunService({
+      capabilities: { ...ALL_CAPABILITIES, singleRoundFlow: false, quotaRecording: false }
+    });
+    const details = await expectStudyRunError(gated.transition(RESEARCHER, hex(run._id), { expectedVersion: v, to: 'OPEN' }), 'STUDY_RUN_NOT_READY', 409);
     expect(details).toContain('CAPABILITY:singleRoundFlow');
     expect(details).toContain('CAPABILITY:quotaRecording');
     expect(details.includes('CAPABILITY:invitationRedemption')).toBe(false);
     expect(details.includes('CAPABILITY:presentationProfile')).toBe(false);
     expect((await runs())[0].status).toBe('DRAFT');
-    const opened = await service().transition(RESEARCHER, hex(run._id), { expectedVersion: v, to: 'OPEN' });
-    const paused = await service().transition(RESEARCHER, hex(run._id), { expectedVersion: opened.run.version, to: 'PAUSED' });
-    const closed = await service().transition(RESEARCHER, hex(run._id), { expectedVersion: paused.run.version, to: 'CLOSED' });
-    await service().transition(RESEARCHER, hex(run._id), { expectedVersion: closed.run.version, to: 'OPEN', reason: 'recruit more' });
+    const production = new StudyRunService();
+    const opened = await production.transition(RESEARCHER, hex(run._id), { expectedVersion: v, to: 'OPEN' });
+    const paused = await production.transition(RESEARCHER, hex(run._id), { expectedVersion: opened.run.version, to: 'PAUSED' });
+    const closed = await production.transition(RESEARCHER, hex(run._id), { expectedVersion: paused.run.version, to: 'CLOSED' });
+    await production.transition(RESEARCHER, hex(run._id), { expectedVersion: closed.run.version, to: 'OPEN', reason: 'recruit more' });
     expect((await runs())[0].status).toBe('OPEN');
     expect((await audits()).filter((a) => a.action === 'STUDY_RUN_STATUS_CHANGED')).toHaveLength(4);
   });

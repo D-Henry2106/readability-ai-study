@@ -9,7 +9,8 @@ export function contentHash(value: string): string {
 }
 
 export function countWords(value: string): number {
-  const normalized = normalizeExperimentalText(value);
+  const stripped = value.replace(/<[^>]+>/g, ' ');
+  const normalized = normalizeExperimentalText(stripped);
   return normalized ? normalized.split(' ').length : 0;
 }
 

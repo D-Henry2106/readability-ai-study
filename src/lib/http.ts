@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
+import { StudyRunError } from '@/lib/study-run/errors';
 
 export function jsonError(error: unknown): NextResponse {
+  // Study Run / invitation services fail with a stable code and an HTTP-style status (never a token or hash).
+  if (error instanceof StudyRunError) return NextResponse.json({ error: error.code, code: error.code, details: error.details }, { status: error.status, headers: { 'Cache-Control': 'no-store' } });
   if (error instanceof ZodError) {
     return NextResponse.json(
       { error: 'Dữ liệu gửi lên không hợp lệ.', issues: error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message })) },

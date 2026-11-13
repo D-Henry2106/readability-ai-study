@@ -1,11 +1,27 @@
+import { makeQuestions } from './question-fixtures';
 import { ObjectId } from 'mongodb';
 import { contentHash, countWords } from '@/lib/experiment/content-integrity';
-import type { StudyRunAdminUpdate, StudyRunStore } from '@/lib/repositories/study-run.repository';
+import type {
+  ClaimRunSessionQuotaTransitionInput,
+  ClaimSupplementalPromotionInput,
+  FinalizeRunSessionQuotaStatusInput,
+  QuotaSessionStore,
+  RevertRunSessionValidityClaimInput,
+  RevertSupplementalPromotionInput
+} from '@/lib/repositories/research.repository';
+import {
+  outcomeForTransition,
+  type StudyRunAdminUpdate,
+  type StudyRunQuotaCounterOptions,
+  type StudyRunQuotaCounterTransition,
+  type StudyRunStore
+} from '@/lib/repositories/study-run.repository';
+import { hasSettlingRelease } from '@/lib/study-run/quota';
 import { PresentationProfileService } from '@/lib/services/presentation-profile.service';
 import { StudyRunService, type StudyRunServiceDeps } from '@/lib/services/study-run.service';
 import type { StudyRunCapabilities } from '@/lib/study-run/capabilities';
 import type { PresentationEmphasisSpan, PresentationProfileDoc } from '@/types/presentation-profile';
-import type { ContentPackageDoc, ContentRevisionDoc, ExperimentConfigDoc } from '@/types/research';
+import type { ContentPackageDoc, ContentRevisionDoc, ExperimentConfigDoc, Presentation, SessionDoc } from '@/types/research';
 import type { StudyRunDoc } from '@/types/study-run';
 import { FakePresentationProfileStore } from './presentation-profile-fakes';
 
@@ -31,11 +47,19 @@ function lookup(doc: unknown, path: string): unknown {
   return path.split('.').reduce<unknown>((value, key) => (value && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined), doc);
 }
 
+function sameDateOrNull(a: Date | undefined | null, b: Date | undefined | null): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return a.getTime() === b.getTime();
+}
+
 /** In-memory StudyRunStore with the same compare-and-set semantics as the MongoDB repository. */
 export class FakeStudyRunStore implements StudyRunStore {
   readonly docs = new Map<string, StudyRunDoc>();
-  /** Every update key ever applied; lets tests prove which fields were (not) written. */
+  /** Every admin update key ever applied; lets tests prove which fields were (not) written by StudyRunService. */
   readonly writtenKeys: string[] = [];
+  /** Every quota counter transition applied via `applyQuotaCounterTransition`. */
+  readonly quotaTransitions: Array<{ id: string; variant: Presentation; transition: StudyRunQuotaCounterTransition; transitionId?: string }> = [];
 
   async insert(doc: StudyRunDoc): Promise<ObjectId> {
     for (const existing of this.docs.values()) if (existing.code === doc.code) throw Object.assign(new Error('E11000 duplicate key'), { code: 11000 });
@@ -78,10 +102,363 @@ export class FakeStudyRunStore implements StudyRunStore {
   async hasOpenRunBlockingLegacyEntry(): Promise<boolean> {
     return [...this.docs.values()].some((d) => d.status === 'OPEN' && d.entryPolicy?.legacyEntry === 'BLOCKED_WHILE_OPEN');
   }
-  /** Test-only: simulate the P4 quota service (not part of the store port). */
+  async applyQuotaCounterTransition(
+    id: ObjectId,
+    variant: Presentation,
+    transition: StudyRunQuotaCounterTransition,
+    transitionId?: string,
+    options: StudyRunQuotaCounterOptions = {}
+  ): Promise<StudyRunDoc | null> {
+    if (variant !== 'V1' && variant !== 'V2') throw new Error('INVALID_PRESENTATION_VARIANT');
+    if (transitionId !== undefined && (!transitionId || /[.$\0]/.test(transitionId))) {
+      throw new Error('INVALID_QUOTA_TRANSITION_ID');
+    }
+    const doc = this.docs.get(id.toHexString());
+    if (!doc) return null;
+    if (transitionId && doc.quotaLedger?.[transitionId]) {
+      const applied = doc.quotaLedger[transitionId];
+      if (applied.transition === transition && applied.variant === variant) {
+        return clone(doc);
+      }
+      return null;
+    }
+    if (options.compensates) {
+      if (!options.sessionId) throw new Error('COMPENSATION_REQUIRES_SESSION');
+      const target = doc.quotaLedger?.[options.compensates];
+      // Same ownership guard the MongoDB repository evaluates atomically.
+      if (!target || (target.claimedAt && hasSettlingRelease(doc.quotaLedger, options.sessionId, target.claimedAt))) return null;
+    }
+    const arm = doc.arms[variant];
+    let nextArm = { ...arm };
+    switch (transition) {
+      case 'CLAIM_INCLUDED':
+        if (doc.quotaPerArm === null || doc.quotaPerArm <= 0 || arm.validIncluded >= doc.quotaPerArm) return null;
+        nextArm = { ...arm, validIncluded: arm.validIncluded + 1 };
+        break;
+      case 'INCREMENT_SUPPLEMENTAL':
+        if (doc.quotaPerArm === null || doc.quotaPerArm <= 0) return null;
+        nextArm = { ...arm, supplementalValid: arm.supplementalValid + 1 };
+        break;
+      case 'RELEASE_INCLUDED':
+        if (arm.validIncluded < 1) return null;
+        nextArm = { ...arm, validIncluded: arm.validIncluded - 1 };
+        break;
+      case 'RELEASE_SUPPLEMENTAL':
+        if (arm.supplementalValid < 1) return null;
+        nextArm = { ...arm, supplementalValid: arm.supplementalValid - 1 };
+        break;
+      case 'PROMOTE_SUPPLEMENTAL':
+        if (doc.quotaPerArm === null || doc.quotaPerArm <= 0 || arm.supplementalValid < 1 || arm.validIncluded >= doc.quotaPerArm) return null;
+        nextArm = { validIncluded: arm.validIncluded + 1, supplementalValid: arm.supplementalValid - 1 };
+        break;
+      case 'REVERT_PROMOTE_SUPPLEMENTAL':
+        if (arm.validIncluded < 1) return null;
+        nextArm = { validIncluded: arm.validIncluded - 1, supplementalValid: arm.supplementalValid + 1 };
+        break;
+    }
+    const next: StudyRunDoc = {
+      ...doc,
+      arms: { ...doc.arms, [variant]: nextArm },
+      ...(transitionId
+        ? {
+            quotaLedger: {
+              ...(doc.quotaLedger ?? {}),
+              [transitionId]: {
+                transitionId,
+                variant,
+                transition,
+                outcome: outcomeForTransition(transition),
+                appliedAt: new Date(),
+                ...(options.sessionId ? { sessionId: options.sessionId } : {}),
+                ...(options.claimedAt ? { claimedAt: clone(options.claimedAt) } : {})
+              }
+            }
+          }
+        : {})
+    };
+    this.docs.set(id.toHexString(), next);
+    this.quotaTransitions.push({ id: id.toHexString(), variant, transition, transitionId });
+    return clone(next);
+  }
+  /** Test-only: simulate direct arm counter state (not part of the store port). */
   setArmsForTest(id: ObjectId, arms: StudyRunDoc['arms']): void {
     const doc = this.docs.get(id.toHexString())!;
     this.docs.set(id.toHexString(), { ...doc, arms });
+  }
+}
+
+/** In-memory QuotaSessionStore with the exact same CAS semantics as ResearchRepository. */
+export class FakeQuotaSessionStore implements QuotaSessionStore {
+  readonly docs = new Map<string, SessionDoc>();
+  readonly writes: string[] = [];
+
+  put(session: SessionDoc): void {
+    this.docs.set(session.id, clone(session));
+  }
+
+  async getSession(id: string): Promise<SessionDoc | null> {
+    const s = this.docs.get(id);
+    return s ? clone(s) : null;
+  }
+
+  async claimRunSessionQuotaTransition(input: ClaimRunSessionQuotaTransitionInput): Promise<SessionDoc | null> {
+    const s = this.docs.get(input.sessionId);
+    if (
+      !s ||
+      s.status !== 'COMPLETED' ||
+      s.currentStage !== 'COMPLETED' ||
+      !s.studyRunId?.equals(input.studyRunId) ||
+      s.presentationVariant !== input.variant ||
+      s.validityFlag !== input.expectedValidityFlag ||
+      (s.quotaStatus ?? null) !== (input.expectedQuotaStatus ?? null)
+    ) {
+      return null;
+    }
+    if (input.expectedReviewedAt !== undefined && !sameDateOrNull(s.validityReviewedAt, input.expectedReviewedAt)) {
+      return null;
+    }
+    if (input.expectedQuotaRecordedAt !== undefined && !sameDateOrNull(s.quotaRecordedAt, input.expectedQuotaRecordedAt)) {
+      return null;
+    }
+    // Same guard as the MongoDB repository: never overwrite a settled transition whose audit entry is still owed.
+    if (input.transition !== undefined && s.quotaTransition && s.quotaTransition.state !== 'PENDING' && s.quotaTransition.auditLogged === false) {
+      return null;
+    }
+    const history = [...(s.validityHistory ?? []), {
+      flag: input.nextValidityFlag,
+      reason: input.reason,
+      reviewedBy: input.reviewedBy,
+      reviewedAt: clone(input.at)
+    }];
+    const next: SessionDoc = {
+      ...s,
+      validityFlag: input.nextValidityFlag,
+      validityReason: input.reason,
+      validityReviewedBy: input.reviewedBy,
+      validityReviewedAt: clone(input.at),
+      validityChecklistVersion: input.checklistVersion,
+      ...(input.nextQuotaStatus !== null ? { quotaStatus: input.nextQuotaStatus } : {}),
+      ...(input.recordQuotaMeta ? { quotaRecordedAt: clone(input.at), quotaRecordedBy: input.reviewedBy } : {}),
+      ...(input.transition !== undefined ? { quotaTransition: clone(input.transition) } : {}),
+      validityHistory: history,
+      updatedAt: clone(input.at)
+    };
+    this.docs.set(input.sessionId, next);
+    this.writes.push('claimRunSessionQuotaTransition');
+    return clone(next);
+  }
+
+  async finalizeRunSessionQuotaStatus(input: FinalizeRunSessionQuotaStatusInput): Promise<SessionDoc | null> {
+    const s = this.docs.get(input.sessionId);
+    const expectedFlag = input.expectedValidityFlag ?? 'VALID';
+    if (
+      !s ||
+      s.status !== 'COMPLETED' ||
+      s.currentStage !== 'COMPLETED' ||
+      !s.studyRunId?.equals(input.studyRunId) ||
+      s.presentationVariant !== input.variant ||
+      s.validityFlag !== expectedFlag ||
+      !sameDateOrNull(s.validityReviewedAt, input.expectedReviewedAt) ||
+      (s.quotaStatus ?? null) !== (input.expectedQuotaStatus ?? null)
+    ) {
+      return null;
+    }
+    if (input.transitionId && (!s.quotaTransition || s.quotaTransition.id !== input.transitionId || s.quotaTransition.state !== 'PENDING')) {
+      return null;
+    }
+    const nextTransition =
+      input.transitionId && s.quotaTransition
+        ? {
+            ...clone(s.quotaTransition),
+            state: input.transitionState ?? 'COMMITTED',
+            committedQuotaStatus: input.quotaStatus,
+            updatedAt: clone(input.at),
+            ...(input.auditLogged !== undefined ? { auditLogged: input.auditLogged } : {})
+          }
+        : s.quotaTransition;
+    const next: SessionDoc = {
+      ...s,
+      quotaStatus: input.quotaStatus,
+      quotaRecordedAt: clone(input.at),
+      quotaRecordedBy: input.recordedBy,
+      ...(nextTransition !== undefined ? { quotaTransition: nextTransition } : {}),
+      updatedAt: clone(input.at)
+    };
+    this.docs.set(input.sessionId, next);
+    this.writes.push('finalizeRunSessionQuotaStatus');
+    return clone(next);
+  }
+
+  async markRunSessionQuotaAuditLogged(sessionId: string, transitionId: string): Promise<void> {
+    const s = this.docs.get(sessionId);
+    if (!s?.quotaTransition || s.quotaTransition.id !== transitionId) return;
+    this.docs.set(sessionId, { ...s, quotaTransition: { ...clone(s.quotaTransition), auditLogged: true } });
+    this.writes.push('markRunSessionQuotaAuditLogged');
+  }
+
+  async revertRunSessionValidityClaim(input: RevertRunSessionValidityClaimInput): Promise<SessionDoc | null> {
+    const s = this.docs.get(input.sessionId);
+    const expectedFlag = input.claimedValidityFlag ?? 'VALID';
+    const expectedQuota = input.claimedQuotaStatus !== undefined ? input.claimedQuotaStatus : input.previousQuotaStatus;
+    if (
+      !s ||
+      s.status !== 'COMPLETED' ||
+      !s.studyRunId?.equals(input.studyRunId) ||
+      s.validityFlag !== expectedFlag ||
+      !sameDateOrNull(s.validityReviewedAt, input.expectedReviewedAt) ||
+      (s.quotaStatus ?? null) !== (expectedQuota ?? null)
+    ) {
+      return null;
+    }
+    if (input.transitionId && s.quotaTransition?.id !== input.transitionId) {
+      return null;
+    }
+    const history = [...(s.validityHistory ?? [])];
+    if (history.length > 0) history.pop();
+    const next: SessionDoc = {
+      ...s,
+      validityFlag: input.previousValidityFlag,
+      validityReason: input.previousReason,
+      validityReviewedBy: input.previousReviewedBy,
+      validityReviewedAt: input.previousReviewedAt ? clone(input.previousReviewedAt) : undefined,
+      validityChecklistVersion: input.previousChecklistVersion ?? null,
+      quotaTransition: null,
+      validityHistory: history,
+      updatedAt: clone(input.previousUpdatedAt ?? input.expectedReviewedAt)
+    };
+    if (input.previousQuotaStatus !== null) {
+      next.quotaStatus = input.previousQuotaStatus;
+    } else {
+      delete next.quotaStatus;
+    }
+    if (input.previousQuotaRecordedAt !== undefined && input.previousQuotaRecordedAt !== null) {
+      next.quotaRecordedAt = clone(input.previousQuotaRecordedAt);
+    } else {
+      delete next.quotaRecordedAt;
+    }
+    if (input.previousQuotaRecordedBy !== undefined && input.previousQuotaRecordedBy !== null) {
+      next.quotaRecordedBy = input.previousQuotaRecordedBy;
+    } else {
+      delete next.quotaRecordedBy;
+    }
+    this.docs.set(input.sessionId, next);
+    this.writes.push('revertRunSessionValidityClaim');
+    return clone(next);
+  }
+
+  async claimSupplementalQuotaPromotion(input: ClaimSupplementalPromotionInput): Promise<SessionDoc | null> {
+    const s = this.docs.get(input.sessionId);
+    if (
+      !s ||
+      s.status !== 'COMPLETED' ||
+      s.currentStage !== 'COMPLETED' ||
+      !s.studyRunId?.equals(input.studyRunId) ||
+      s.presentationVariant !== input.variant ||
+      s.validityFlag !== 'VALID' ||
+      s.quotaStatus !== 'SUPPLEMENTAL' ||
+      !sameDateOrNull(s.quotaRecordedAt, input.expectedRecordedAt) ||
+      (s.quotaTransition && s.quotaTransition.state !== 'PENDING' && s.quotaTransition.auditLogged === false)
+    ) {
+      return null;
+    }
+    const next: SessionDoc = {
+      ...s,
+      quotaRecordedAt: clone(input.at),
+      quotaRecordedBy: input.recordedBy,
+      ...(input.transition !== undefined ? { quotaTransition: clone(input.transition) } : {}),
+      updatedAt: clone(input.at)
+    };
+    this.docs.set(input.sessionId, next);
+    this.writes.push('claimSupplementalQuotaPromotion');
+    return clone(next);
+  }
+
+  async finalizeSupplementalQuotaPromotion(input: {
+    sessionId: string;
+    studyRunId: ObjectId;
+    variant: Presentation;
+    claimAt: Date;
+    transitionId?: string;
+    transitionState?: 'COMMITTED' | 'RECOVERED';
+    auditLogged?: boolean;
+  }): Promise<SessionDoc | null> {
+    const s = this.docs.get(input.sessionId);
+    if (
+      !s ||
+      s.status !== 'COMPLETED' ||
+      s.currentStage !== 'COMPLETED' ||
+      !s.studyRunId?.equals(input.studyRunId) ||
+      s.presentationVariant !== input.variant ||
+      s.validityFlag !== 'VALID' ||
+      s.quotaStatus !== 'SUPPLEMENTAL' ||
+      !sameDateOrNull(s.quotaRecordedAt, input.claimAt)
+    ) {
+      return null;
+    }
+    if (input.transitionId && (!s.quotaTransition || s.quotaTransition.id !== input.transitionId || s.quotaTransition.state !== 'PENDING')) {
+      return null;
+    }
+    const nextTransition =
+      input.transitionId && s.quotaTransition
+        ? {
+            ...clone(s.quotaTransition),
+            state: input.transitionState ?? 'COMMITTED',
+            committedQuotaStatus: 'INCLUDED' as const,
+            updatedAt: clone(input.claimAt),
+            ...(input.auditLogged !== undefined ? { auditLogged: input.auditLogged } : {})
+          }
+        : s.quotaTransition;
+    const next: SessionDoc = {
+      ...s,
+      quotaStatus: 'INCLUDED',
+      ...(nextTransition !== undefined ? { quotaTransition: nextTransition } : {}),
+      updatedAt: clone(input.claimAt)
+    };
+    this.docs.set(input.sessionId, next);
+    this.writes.push('finalizeSupplementalQuotaPromotion');
+    return clone(next);
+  }
+
+  async revertSupplementalQuotaPromotion(input: RevertSupplementalPromotionInput): Promise<SessionDoc | null> {
+    const s = this.docs.get(input.sessionId);
+    if (
+      !s ||
+      s.status !== 'COMPLETED' ||
+      !s.studyRunId?.equals(input.studyRunId) ||
+      s.presentationVariant !== input.variant ||
+      s.validityFlag !== 'VALID' ||
+      s.quotaStatus !== 'SUPPLEMENTAL' ||
+      !sameDateOrNull(s.quotaRecordedAt, input.claimAt)
+    ) {
+      return null;
+    }
+    if (input.transitionId && s.quotaTransition?.id !== input.transitionId) {
+      return null;
+    }
+    const next: SessionDoc = {
+      ...s,
+      quotaRecordedAt: input.previousRecordedAt ? clone(input.previousRecordedAt) : null,
+      quotaRecordedBy: input.previousRecordedBy,
+      quotaTransition: null,
+      updatedAt: clone(input.previousUpdatedAt ?? input.claimAt)
+    };
+    this.docs.set(input.sessionId, next);
+    this.writes.push('revertSupplementalQuotaPromotion');
+    return clone(next);
+  }
+
+  async countRunQuotaFromSessions(studyRunId: ObjectId): Promise<StudyRunDoc['arms']> {
+    const counts: StudyRunDoc['arms'] = {
+      V1: { validIncluded: 0, supplementalValid: 0 },
+      V2: { validIncluded: 0, supplementalValid: 0 }
+    };
+    for (const s of this.docs.values()) {
+      if (!s.studyRunId?.equals(studyRunId) || s.status !== 'COMPLETED' || s.validityFlag !== 'VALID') continue;
+      if (s.presentationVariant !== 'V1' && s.presentationVariant !== 'V2') continue;
+      if (s.quotaStatus === 'INCLUDED') counts[s.presentationVariant].validIncluded += 1;
+      else if (s.quotaStatus === 'SUPPLEMENTAL') counts[s.presentationVariant].supplementalValid += 1;
+    }
+    return counts;
   }
 }
 
@@ -105,11 +482,14 @@ export function makeHarness(options: { capabilities?: StudyRunCapabilities; pack
     config: fixtureConfig(),
     contentPublished: true,
     questionsPublished: true,
+    /** Extra question sets selectable for a run (P5): keyed by hex id. */
+    extraQuestionSets: new Map<string, unknown>(),
     problems: options.packageProblems ?? ([] as string[])
   };
-  const audits: Array<{ username: string; role: string; action: string; targetType: string; targetId?: string | null; metadata?: Record<string, unknown> }> = [];
+  const audits: Array<{ username: string; role: string; action: string; targetType: string; targetId?: string | null; metadata?: Record<string, unknown>; dedupeKey?: string }> = [];
   const store = new FakeStudyRunStore();
   const profiles = new FakePresentationProfileStore();
+  const quotaSessions = new FakeQuotaSessionStore();
   const research: NonNullable<StudyRunServiceDeps['research']> = {
     getConfig: async () => state.config,
     getPackageById: async (id: ObjectId) => (state.pkg && state.pkg._id?.equals(id) ? state.pkg : null),
@@ -129,10 +509,18 @@ export function makeHarness(options: { capabilities?: StudyRunCapabilities; pack
             publishedAt: state.contentPublished ? new Date(0) : null
           } as ContentRevisionDoc)
         : null,
-    getQuestionSetById: async () => ({ status: state.questionsPublished ? 'PUBLISHED' : 'DRAFT', locked: state.questionsPublished }) as never,
+    getQuestionSetById: async (id: ObjectId) => (state.extraQuestionSets.get(id.toHexString()) ?? (id.equals(questionSetId)
+      ? ({ _id: questionSetId, revision: 7, label: 'Fixture questions', phase: 'MAIN', questions: makeQuestions(), status: state.questionsPublished ? 'PUBLISHED' : 'DRAFT', locked: state.questionsPublished, createdAt: new Date(0), publishedAt: null })
+      : null)) as never,
     addAudit: async () => undefined
   };
-  const audit = { record: async (input: (typeof audits)[number]) => { audits.push(input); } };
+  const audit = {
+    record: async (input: (typeof audits)[number]) => {
+      // Mirrors the unique `dedupeKey` index: at most one entry per key.
+      if (input.dedupeKey && audits.some((a) => a.dedupeKey === input.dedupeKey)) return;
+      audits.push(input);
+    }
+  };
   const deps: StudyRunServiceDeps = {
     store,
     profiles,
@@ -149,7 +537,7 @@ export function makeHarness(options: { capabilities?: StudyRunCapabilities; pack
     await profileService.preview(RESEARCHER, created.profile._id!.toHexString());
     return (await profileService.confirm(RESEARCHER, created.profile._id!.toHexString())).profile;
   }
-  return { service: new StudyRunService(deps), profileService, store, profiles, audits, state, packageId, contentId, deps, confirmDefaultProfile };
+  return { service: new StudyRunService(deps), profileService, store, profiles, quotaSessions, audits, state, packageId, contentId, questionSetId, deps, confirmDefaultProfile };
 }
 
 export async function expectStudyRunError(work: Promise<unknown>, code: string, status?: number): Promise<string[]> {

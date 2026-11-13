@@ -6,7 +6,7 @@ import { sha256Hex } from '@/lib/study-run/info-consent';
 import { INFO_CONSENT_REVIEW_STATEMENT } from '@/lib/validation/study-run-schemas';
 
 type Harness = ReturnType<typeof makeHarness>;
-const base = (h: Harness, over: Record<string, unknown> = {}) => ({ code: 'run-01', name: 'Run 01', phase: 'MAIN', packageId: h.packageId.toHexString(), targetSampleSize: 30, ...over });
+const base = (h: Harness, over: Record<string, unknown> = {}) => ({ code: 'run-01', name: 'Run 01', phase: 'MAIN', packageId: h.packageId.toHexString(), questionSetId: h.questionSetId.toHexString(), targetSampleSize: 30, ...over });
 async function create(h: Harness, over: Record<string, unknown> = {}) { return (await h.service.create(RESEARCHER, base(h, over))).run; }
 const id = (run: { _id?: ObjectId }) => run._id!.toHexString();
 /** Brings a DRAFT run to "everything confirmed" so it can OPEN. */
@@ -287,19 +287,26 @@ describe('AC-27 StudyRunStatus, entry policy and capability gate', () => {
     expect(changes.map((a) => `${a.metadata!.from}->${a.metadata!.to}`)).toEqual(['DRAFT->OPEN', 'OPEN->PAUSED', 'PAUSED->OPEN', 'OPEN->CLOSED', 'CLOSED->OPEN']);
     expect(changes[changes.length - 1].metadata!.reason).toBe('recruit more');
   });
-  it('production capabilities: P2 invitationRedemption and P3 presentationProfile are true; P4 stays false so a real run cannot OPEN yet', async () => {
+  it('production capabilities: all four P2–P4 capabilities are now true so a fully confirmed run can OPEN; missing capabilities still block OPEN', async () => {
     expect(STUDY_RUN_CAPABILITIES.invitationRedemption).toBe(true);
     expect(STUDY_RUN_CAPABILITIES.presentationProfile).toBe(true);
-    expect([STUDY_RUN_CAPABILITIES.singleRoundFlow, STUDY_RUN_CAPABILITIES.quotaRecording].every((v) => v === false)).toBe(true);
+    expect(STUDY_RUN_CAPABILITIES.singleRoundFlow).toBe(true);
+    expect(STUDY_RUN_CAPABILITIES.quotaRecording).toBe(true);
     expect(Object.isFrozen(STUDY_RUN_CAPABILITIES)).toBe(true);
     const h = makeHarness();
     const run = await ready(h);
     const { StudyRunService } = await import('@/lib/services/study-run.service');
-    const prod = new StudyRunService({ ...h.deps, capabilities: undefined });
-    const details = await expectStudyRunError(prod.transition(RESEARCHER, id(run), { expectedVersion: run.version, to: 'OPEN' }), 'STUDY_RUN_NOT_READY', 409);
+    const gated = new StudyRunService({
+      ...h.deps,
+      capabilities: { ...ALL_CAPABILITIES, singleRoundFlow: false, quotaRecording: false }
+    });
+    const details = await expectStudyRunError(gated.transition(RESEARCHER, id(run), { expectedVersion: run.version, to: 'OPEN' }), 'STUDY_RUN_NOT_READY', 409);
     for (const name of ['singleRoundFlow', 'quotaRecording']) expect(details).toContain(`CAPABILITY:${name}`);
     for (const name of ['invitationRedemption', 'presentationProfile']) expect(details.includes(`CAPABILITY:${name}`)).toBe(false);
     expect((await h.service.get(RESEARCHER, id(run))).status).toBe('DRAFT');
+    const prod = new StudyRunService({ ...h.deps, capabilities: undefined });
+    const opened = await prod.transition(RESEARCHER, id(run), { expectedVersion: run.version, to: 'OPEN' });
+    expect(opened.run.status).toBe('OPEN');
   });
   it('with injected capabilities the open conditions are: quota, entry policy, info/consent, snapshot, V2 profile, capabilities', async () => {
     const h = makeHarness({ capabilities: { ...ALL_CAPABILITIES, singleRoundFlow: false } });

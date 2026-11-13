@@ -7,13 +7,11 @@ import { ResearchRepository } from '@/lib/repositories/research.repository';
 import { ExperimentStateService } from '@/lib/services/state.service';
 
 export default async function HomePage() {
-  const readiness = await new ReadinessService()
-    .check()
-    .catch(() => ({
-      ready: false,
-      missing: ['DATABASE_OR_CONFIGURATION_UNAVAILABLE'],
-      checks: []
-    }));
+  const readiness = await new ReadinessService().check().catch(() => ({
+    ready: false,
+    missing: ['DATABASE_OR_CONFIGURATION_UNAVAILABLE'],
+    checks: []
+  }));
 
   const id = await getParticipantSessionId();
   let resume: string | null = null;
@@ -25,8 +23,24 @@ export default async function HomePage() {
     const session = await repo.getSession(id).catch(() => null);
 
     if (session?.status === 'ACTIVE') resume = new ExperimentStateService(repo).routeFor(session);
-    else if (session?.status) { terminal = session.status === 'COMPLETED' ? 'COMPLETED' : session.status === 'DECLINED' || session.status === 'WITHDRAWN' || session.status === 'INCOMPLETE' ? session.status : null;
-      if (terminal && session.phase === 'PILOT') { const cfg = await repo.getConfig(); pilotCanRestart = cfg.phase === 'PILOT' && cfg.studyPublished === true && cfg.allowPilotRetakes === true && !session.pilotRestartedAt && terminal !== 'INCOMPLETE'; }
+    else if (session?.status) {
+      terminal =
+        session.status === 'COMPLETED'
+          ? 'COMPLETED'
+          : session.status === 'DECLINED' ||
+              session.status === 'WITHDRAWN' ||
+              session.status === 'INCOMPLETE'
+            ? session.status
+            : null;
+      if (terminal && session.phase === 'PILOT') {
+        const cfg = await repo.getConfig();
+        pilotCanRestart =
+          cfg.phase === 'PILOT' &&
+          cfg.studyPublished === true &&
+          cfg.allowPilotRetakes === true &&
+          !session.pilotRestartedAt &&
+          terminal !== 'INCOMPLETE';
+      }
     }
   }
 
@@ -36,9 +50,7 @@ export default async function HomePage() {
         <header className="home-header stack-sm">
           <p className="home-kicker">Nghiên cứu khoa học</p>
 
-          <h1 className="home-title">
-            Trình bày nội dung web dễ tiếp cận và khả năng đọc hiểu
-          </h1>
+          <h1 className="home-title">Trình bày nội dung web dễ tiếp cận và khả năng đọc hiểu</h1>
 
           <p className="home-lead">
             Nghiên cứu này tìm hiểu ảnh hưởng của cách trình bày nội dung web đến khả năng đọc hiểu
@@ -53,24 +65,19 @@ export default async function HomePage() {
             <li className="study-overview-item">
               <strong>Thông tin trước khi tham gia</strong>
               <span>
-                Bạn sẽ được đọc thông tin nghiên cứu trước khi quyết định
-                có đồng ý tham gia hay không.
+                Bạn sẽ được đọc thông tin nghiên cứu trước khi quyết định có đồng ý tham gia hay
+                không.
               </span>
             </li>
 
             <li className="study-overview-item">
-              <strong>Hai lượt đọc</strong>
-              <span>
-                Nghiên cứu có hai lượt đọc với thời gian nghỉ bắt buộc
-                ở giữa.
-              </span>
+              <strong>Một lượt đọc tập trung</strong>
+              <span>Nghiên cứu gồm một lượt đọc nội dung và chuyển ngay sang bộ câu hỏi đọc hiểu (không ngắt quãng).</span>
             </li>
 
             <li className="study-overview-item">
               <strong>Câu hỏi đọc hiểu</strong>
-              <span>
-                Sau mỗi lượt đọc là năm câu hỏi kiểm tra đọc hiểu.
-              </span>
+              <span>Sau phần đọc là bộ câu hỏi kiểm tra đọc hiểu.</span>
             </li>
           </ul>
         </section>
@@ -80,19 +87,26 @@ export default async function HomePage() {
             {terminal
               ? 'Trạng thái tham gia của bạn'
               : resume
-              ? 'Tiếp tục phiên nghiên cứu'
-              : readiness.ready
-                ? 'Tham gia nghiên cứu'
-                : 'Trạng thái nghiên cứu'}
+                ? 'Tiếp tục phiên nghiên cứu'
+                : readiness.ready
+                  ? 'Tham gia nghiên cứu'
+                  : 'Trạng thái nghiên cứu'}
           </h2>
 
           {terminal ? (
-            <div className="notice" role="status"><p>{terminal === 'COMPLETED' ? 'Bạn đã hoàn thành nghiên cứu. Phiên này không được tạo lại tự động.' : 'Phiên trước đã kết thúc. Vui lòng liên hệ nhà nghiên cứu nếu cần hỗ trợ theo chính sách tham gia.'}</p>{terminal === 'COMPLETED' ? <Link href="/complete">Xem phần hoàn thành</Link> : null}{pilotCanRestart ? <PilotRestartButton /> : null}</div>
+            <div className="notice" role="status">
+              <p>
+                {terminal === 'COMPLETED'
+                  ? 'Bạn đã hoàn thành nghiên cứu. Phiên này không được tạo lại tự động.'
+                  : 'Phiên trước đã kết thúc. Vui lòng liên hệ nhà nghiên cứu nếu cần hỗ trợ theo chính sách tham gia.'}
+              </p>
+              {terminal === 'COMPLETED' ? <Link href="/complete">Xem phần hoàn thành</Link> : null}
+              {pilotCanRestart ? <PilotRestartButton /> : null}
+            </div>
           ) : resume ? (
             <>
               <p className="home-action-copy">
-                Phiên nghiên cứu đã được tạo. Hãy tiếp tục từ
-                bước hiện tại.
+                Phiên nghiên cứu đã được tạo. Hãy tiếp tục từ bước hiện tại.
               </p>
 
               <Link className="btn btn-primary" href={resume}>
@@ -110,7 +124,10 @@ export default async function HomePage() {
           ) : (
             <div className="notice notice-warning stack-sm">
               <strong>Nghiên cứu hiện chưa mở.</strong>
-              <span>Vui lòng quay lại sau khi người nghiên cứu hoàn tất và công bố tài liệu đã phê duyệt.</span>
+              <span>
+                Vui lòng quay lại sau khi người nghiên cứu hoàn tất và công bố tài liệu đã phê
+                duyệt.
+              </span>
             </div>
           )}
         </section>

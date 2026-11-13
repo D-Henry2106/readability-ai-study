@@ -41,9 +41,10 @@ export class RunSessionService {
     if (!config.minimumReadingSeconds) missing.push('MINIMUM_READING_TIME');
     const pkg = await this.research.getPackageById(run.snapshot.packageId);
     if (!pkg || pkg.code !== run.snapshot.packageCode || pkg.revision !== run.snapshot.packageRevision
-      || !pkg.contentRevisionId.equals(run.snapshot.contentRevisionId) || !pkg.questionSetId.equals(run.snapshot.questionSetId)) missing.push('RUN_PACKAGE_SNAPSHOT');
+      || !pkg.contentRevisionId.equals(run.snapshot.contentRevisionId)) missing.push('RUN_PACKAGE_SNAPSHOT');
     if (missing.length || !texts.ok || !pkg) throw new Error(`EXPERIMENT_NOT_READY:${missing.join(',')}`);
     const variant = invitation.variant;
+    const questionSetRevision = invitation.questionSetRevision ?? run.snapshot.questionSetRevision;
     const profileId = variant === 'V2' ? run.presentation.V2.profileId : null;
     const now = this.now();
     return {
@@ -53,7 +54,9 @@ export class RunSessionService {
       currentStage: 'INFORMATION',
       groupCode: null,
       contentRevisionId: run.snapshot.contentRevisionId,
-      questionSetId: run.snapshot.questionSetId,
+      // P5: the question set pinned by the invitation (falls back to the run snapshot for invitations issued before P5).
+      questionSetId: invitation.questionSetId ?? run.snapshot.questionSetId,
+      ...(questionSetRevision !== undefined ? { questionSetRevision } : {}),
       assignedPackageId: run.snapshot.packageId,
       assignedPackageRevision: run.snapshot.packageRevision,
       assignedPackageCode: run.snapshot.packageCode,

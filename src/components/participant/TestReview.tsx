@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-export function TestReview({ roundNo }: { roundNo: 1 | 2 }) {
+export function TestReview({ roundNo, isSingleRound = false }: { roundNo: 1 | 2; isSingleRound?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const router = useRouter();
@@ -32,7 +32,9 @@ export function TestReview({ roundNo }: { roundNo: 1 | 2 }) {
         <span>✓</span>
       </div>
       <div className="review-intro stack-sm">
-        <span className="badge badge-success">Lượt đọc {roundNo} hoàn thành</span>
+        <span className="badge badge-success">
+          {isSingleRound ? 'Phần đọc hoàn thành' : `Lượt đọc ${roundNo} hoàn thành`}
+        </span>
         <h2>Bạn đã sẵn sàng trả lời câu hỏi đọc hiểu?</h2>
         <p className="help review-lead">Vui lòng đọc hướng dẫn trước khi bắt đầu.</p>
       </div>
@@ -40,7 +42,7 @@ export function TestReview({ roundNo }: { roundNo: 1 | 2 }) {
       <div className="review-grid" aria-label="Hướng dẫn trả lời câu hỏi">
         <article className="review-item">
           <span className="review-number">01</span>
-          <div><strong>Năm câu hỏi</strong><p>Trả lời năm câu hỏi dựa trên nội dung vừa đọc.</p></div>
+          <div><strong>Câu hỏi kiểm tra</strong><p>Trả lời các câu hỏi dựa trên nội dung vừa đọc.</p></div>
         </article>
         <article className="review-item">
           <span className="review-number">02</span>
@@ -48,7 +50,14 @@ export function TestReview({ roundNo }: { roundNo: 1 | 2 }) {
         </article>
         <article className="review-item">
           <span className="review-number">03</span>
-          <div><strong>Chưa hiển thị điểm</strong><p>Đáp án và điểm được ẩn trong thời gian nghiên cứu để tránh ảnh hưởng đến lượt sau.</p></div>
+          <div>
+            <strong>Chưa hiển thị điểm</strong>
+            <p>
+              {isSingleRound
+                ? 'Đáp án và điểm được ẩn trong suốt quá trình thực hiện nghiên cứu.'
+                : 'Đáp án và điểm được ẩn trong thời gian nghiên cứu để tránh ảnh hưởng đến lượt sau.'}
+            </p>
+          </div>
         </article>
         <article className="review-item">
           <span className="review-number">04</span>

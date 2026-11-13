@@ -12,6 +12,18 @@ export interface StudyRunArmCounters {
   supplementalValid: number;
 }
 
+export interface StudyRunAppliedQuotaTransition {
+  transitionId: string;
+  variant: 'V1' | 'V2';
+  transition: string;
+  outcome: 'INCLUDED' | 'SUPPLEMENTAL' | 'NOT_COUNTED';
+  appliedAt: Date;
+  /** Session the counter change belongs to (lets a compensation prove nobody else already released it). */
+  sessionId?: string;
+  /** Per-session monotonic `claimedAt` of the owning session transition (not an app-server clock). */
+  claimedAt?: Date;
+}
+
 export interface StudyRunEntryPolicy {
   entryMode: StudyRunEntryMode;
   legacyEntry: LegacyEntryPolicy;
@@ -38,6 +50,8 @@ export interface StudyRunSnapshot {
   packageRevision: number;
   contentRevisionId: ObjectId;
   questionSetId: ObjectId;
+  /** P5: revision of the snapshotted question set. Absent on runs created before P5. */
+  questionSetRevision?: number;
 }
 
 export interface StudyRunDoc {
@@ -63,6 +77,8 @@ export interface StudyRunDoc {
   };
   /** Quota counters: initialised to 0 in P1 and NOT written by any P1 code path (quota recording is P4). */
   arms: { V1: StudyRunArmCounters; V2: StudyRunArmCounters };
+  /** Durable idempotency ledger for P4 quota counter transitions, written atomically with `arms` updates. */
+  quotaLedger?: Record<string, StudyRunAppliedQuotaTransition>;
   infoConsentReview: StudyRunInfoConsentReview | null;
   /** Set by P2 when the first invitation is issued; never written in P1. */
   locked: boolean;

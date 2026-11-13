@@ -2,6 +2,7 @@ import { ObjectId } from 'mongodb';
 import { assertRole } from '@/lib/auth/roles';
 import { ResearchRepository } from '@/lib/repositories/research.repository';
 import { InvitationRepository, type InvitationAdminStore } from '@/lib/repositories/invitation.repository';
+import type { VariantLockStore } from '@/lib/repositories/research.repository';
 import {
   PresentationProfileRepository,
   type PresentationProfileStore
@@ -24,6 +25,8 @@ export interface InvitationServiceDeps {
   runs?: Pick<StudyRunStore, 'getById' | 'lockIfUnlocked'>;
   profiles?: Pick<PresentationProfileStore, 'getById' | 'lockIfConfirmed'>;
   research?: Pick<ResearchRepository, 'getSession' | 'addAudit'>;
+  /** P5-D: per-variant intake lock. Defaults to the research repository. */
+  locks?: Pick<VariantLockStore, 'getVariantLocks'>;
   audit?: Pick<AuditService, 'record'>;
   /** Public base URL used to build links (defaults to APP_URL). */
   baseUrl?: () => string;
@@ -48,6 +51,7 @@ export class InvitationService {
   private readonly runs: NonNullable<InvitationServiceDeps['runs']>;
   private readonly profiles: NonNullable<InvitationServiceDeps['profiles']>;
   private readonly research: NonNullable<InvitationServiceDeps['research']>;
+  private readonly locks: NonNullable<InvitationServiceDeps['locks']>;
   private readonly audit: NonNullable<InvitationServiceDeps['audit']>;
   private readonly baseUrl: () => string;
   private readonly now: () => Date;
@@ -58,6 +62,7 @@ export class InvitationService {
     this.runs = deps.runs ?? new StudyRunRepository();
     this.profiles = deps.profiles ?? new PresentationProfileRepository();
     this.research = research;
+    this.locks = deps.locks ?? new ResearchRepository();
     this.audit = deps.audit ?? new AuditService(research as ResearchRepository);
     this.baseUrl = deps.baseUrl ?? (() => process.env.APP_URL ?? 'http://localhost:3000');
     this.now = deps.now ?? (() => new Date());
@@ -148,6 +153,8 @@ export class InvitationService {
     replaces: ObjectId | null
   ): Promise<{ issued: IssuedInvitation[]; auditLogged: boolean }> {
     const studyRunId = run._id!;
+    // P5-D: a locked variant issues nothing (the Admin UI hides the button, but this is the enforcement).
+    if ((await this.locks.getVariantLocks())[variant].locked) throw new StudyRunError('VARIANT_LOCKED', 409);
     const profileId = run.presentation.V2.profileId;
     if (!profileId) throw new StudyRunError('PRESENTATION_PROFILE_NOT_CONFIRMED', 409);
     const profile = await this.profiles.getById(profileId);
@@ -168,6 +175,8 @@ export class InvitationService {
       const _id = new ObjectId();
       docs.push({
         _id, studyRunId, variant, tokenHash: hashInvitationToken(token), status: 'ISSUED', redeemedAt: null, revokedAt: null,
+        // P5: the question set (and revision) is pinned on the invitation; later edits or admin selections never change it.
+        questionSetId: run.snapshot.questionSetId, ...(run.snapshot.questionSetRevision !== undefined ? { questionSetRevision: run.snapshot.questionSetRevision } : {}),
         revokedBy: null, revokedReason: null, replacesInvitationId: replaces, label, recovery: null, createdBy: actor.username, createdAt: now
       });
       issued.push({ invitationId: _id.toHexString(), variant, token, link: buildInvitationLink(base, token) });
@@ -223,7 +232,8 @@ export class InvitationService {
     await auditLocks(docs[0]._id!.toHexString());
     for (const doc of docs) {
       auditLogged = (await this.record(actor, 'INVITATION_ISSUED', doc, {
-        studyRunId: studyRunId.toHexString(), variant, replacesInvitationId: replaces ? replaces.toHexString() : null
+        studyRunId: studyRunId.toHexString(), variant, replacesInvitationId: replaces ? replaces.toHexString() : null,
+        questionSetId: run.snapshot.questionSetId.toHexString(), questionSetRevision: run.snapshot.questionSetRevision ?? null
       })) && auditLogged;
     }
     return { issued, auditLogged };

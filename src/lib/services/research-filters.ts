@@ -1,13 +1,16 @@
-import type { GroupCode, SessionStatus, StudyPhase, ValidityFlag } from '@/types/research';
+import type { GroupCode, Presentation, SessionStatus, StudyPhase, ValidityFlag } from '@/types/research';
 
-export type ResearchFilters = { group?: GroupCode; packageCode?: string; revision?: number };
+export type ResearchFilters = { group?: GroupCode; packageCode?: string; revision?: number; variant?: Presentation; studyRunId?: string };
 /** One parser for the statistics dashboard and every CSV entrypoint. */
-export function parseResearchFilters(query: { group?: string; package?: string; revision?: string }): ResearchFilters {
+export function parseResearchFilters(query: { group?: string; package?: string; revision?: string; variant?: string; studyRunId?: string }): ResearchFilters {
   const revision = query.revision && /^[1-9][0-9]*$/.test(query.revision) ? Number(query.revision) : undefined;
+  const studyRunId = query.studyRunId && /^[0-9a-fA-F]{24}$/.test(query.studyRunId) ? query.studyRunId : undefined;
   return {
     group: query.group === 'A' || query.group === 'B' ? query.group : undefined,
+    variant: query.variant === 'V1' || query.variant === 'V2' ? query.variant : undefined,
     packageCode: query.package && /^[A-Za-z0-9_-]{2,40}$/.test(query.package) ? query.package.toUpperCase() : undefined,
-    revision: revision !== undefined && Number.isSafeInteger(revision) ? revision : undefined
+    revision: revision !== undefined && Number.isSafeInteger(revision) ? revision : undefined,
+    studyRunId
   };
 }
 
@@ -36,8 +39,8 @@ export function parseSessionListQuery(
 ): { ok: true; value: SessionListQuery } | { ok: false; error: string } {
   const get = (key: string) => (query[key] === undefined || query[key] === '' ? undefined : query[key]);
   const invalid = { ok: false as const, error: 'Bộ lọc không hợp lệ.' };
-  const filters = parseResearchFilters({ group: get('group'), package: get('package'), revision: get('revision') });
-  if ((get('group') && !filters.group) || (get('package') && !filters.packageCode) || (get('revision') && !filters.revision)) return invalid;
+  const filters = parseResearchFilters({ group: get('group'), package: get('package'), revision: get('revision'), variant: get('variant') });
+  if ((get('variant') && !filters.variant) || (get('group') && !filters.group) || (get('package') && !filters.packageCode) || (get('revision') && !filters.revision)) return invalid;
 
   const phaseRaw = get('phase');
   if (phaseRaw !== undefined && phaseRaw !== 'PILOT' && phaseRaw !== 'MAIN') return invalid;

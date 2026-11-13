@@ -17,6 +17,8 @@ export const studyRunCreateSchema = z.object({
   name: z.string().trim().min(1).max(150),
   phase: z.enum(['PILOT', 'MAIN']),
   packageId: z.string().regex(/^[a-fA-F0-9]{24}$/),
+  /** P5: a PUBLISHED 15-question set. Required in Study Run UI; optional at schema level for historical compatibility. */
+  questionSetId: z.string().regex(/^[a-fA-F0-9]{24}$/).optional(),
   targetSampleSize: sampleSizeSchema
 });
 

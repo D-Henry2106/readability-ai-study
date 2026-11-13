@@ -18,6 +18,9 @@ export interface InvitationDoc {
   _id?: ObjectId;
   studyRunId: ObjectId;
   variant: Presentation;
+  /** P5: the question set (and its revision) the link will use, copied from the run snapshot when the link is issued. Absent on older invitations. */
+  questionSetId?: ObjectId;
+  questionSetRevision?: number;
   tokenHash: string;
   status: InvitationStatus;
   /** Allocated by the redeem CAS (absent while ISSUED) so a retry after a mid-way failure reuses the same id. */

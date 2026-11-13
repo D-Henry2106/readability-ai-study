@@ -21,7 +21,8 @@ import {
   studyRunSampleSizeSchema,
   studyRunTransitionSchema
 } from '@/lib/validation/study-run-schemas';
-import type { AdminRole, ContentPackageDoc } from '@/types/research';
+import { questionSetSchema } from '@/lib/validation/schemas';
+import type { AdminRole, ContentPackageDoc, QuestionSetDoc } from '@/types/research';
 import type { StudyRunDoc, StudyRunStatus } from '@/types/study-run';
 
 export interface StudyRunActor { username: string; role: AdminRole }
@@ -110,7 +111,10 @@ export class StudyRunService {
     const input = studyRunCreateSchema.parse(payload);
     const pkg = await this.research.getPackageById(new ObjectId(input.packageId));
     if (!pkg?._id) throw new StudyRunError('STUDY_RUN_PACKAGE_NOT_FOUND', 404);
-    const problems = await this.packageProblems(pkg, { phase: input.phase });
+    // P5: the run snapshots ONE question set (15 questions, PUBLISHED) used by both V1 and V2 links.
+    const questionSetId = input.questionSetId ? new ObjectId(input.questionSetId) : (pkg.questionSetId ?? null);
+    if (!questionSetId) throw new StudyRunError('STUDY_RUN_QUESTION_SET_REQUIRED', 400);
+    const problems = await this.packageProblems(pkg, { phase: input.phase, questionSetId });
     if (problems.length) throw new StudyRunError('STUDY_RUN_PACKAGE_NOT_ELIGIBLE', 409, problems);
 
     const now = this.now();
@@ -130,7 +134,8 @@ export class StudyRunService {
         packageCode: pkg.code,
         packageRevision: pkg.revision,
         contentRevisionId: pkg.contentRevisionId,
-        questionSetId: pkg.questionSetId
+        questionSetId,
+        questionSetRevision: (await this.research.getQuestionSetById(questionSetId))!.revision
       },
       presentation: { V1: { version: null }, V2: { profileId: null, version: null } },
       arms: { V1: { validIncluded: 0, supplementalValid: 0 }, V2: { validIncluded: 0, supplementalValid: 0 } },
@@ -345,19 +350,20 @@ export class StudyRunService {
   }
 
   /** Package/content/question checks shared by creation (phase check) and opening (snapshot check). */
-  private async packageProblems(pkg: ContentPackageDoc, options: { phase?: string; snapshot?: StudyRunDoc['snapshot'] }): Promise<string[]> {
+  private async packageProblems(pkg: ContentPackageDoc, options: { phase?: string; snapshot?: StudyRunDoc['snapshot']; questionSetId: ObjectId }): Promise<string[]> {
     const problems: string[] = [];
     if (pkg.status !== 'PUBLISHED' || !pkg.enabled) problems.push('PACKAGE_NOT_PUBLISHED');
     if (options.phase && pkg.phase !== options.phase) problems.push('PACKAGE_PHASE_MISMATCH');
-    problems.push(...(await this.packages.verifyPackage(pkg)));
+    // The package's OWN question set is not what the run uses (the run snapshots `options.questionSetId`), so its verdict is dropped here.
+    problems.push(...(await this.packages.verifyPackage(pkg)).filter((p) => p !== 'INVALID_QUESTIONS'));
     const [content, questions] = await Promise.all([
-      this.research.getContentById(pkg.contentRevisionId), this.research.getQuestionSetById(pkg.questionSetId)
+      this.research.getContentById(pkg.contentRevisionId), this.research.getQuestionSetById(options.questionSetId)
     ]);
     if (!content || content.status !== 'PUBLISHED' || !content.locked) problems.push('CONTENT_NOT_PUBLISHED');
-    if (!questions || questions.status !== 'PUBLISHED' || !questions.locked) problems.push('QUESTIONS_NOT_PUBLISHED');
+    problems.push(...questionSetProblems(questions, options.phase ?? pkg.phase));
     const s = options.snapshot;
     if (s && !(pkg._id?.equals(s.packageId) && pkg.code === s.packageCode && pkg.revision === s.packageRevision &&
-      pkg.contentRevisionId.equals(s.contentRevisionId) && pkg.questionSetId.equals(s.questionSetId))) problems.push('SNAPSHOT_MISMATCH');
+      pkg.contentRevisionId.equals(s.contentRevisionId))) problems.push('SNAPSHOT_MISMATCH');
     return problems;
   }
 
@@ -367,12 +373,18 @@ export class StudyRunService {
     if (run.quotaPerArm === null || !run.quotaConfirmedAt || run.quotaPerArm * 2 !== run.targetSampleSize) missing.push('QUOTA_NOT_CONFIRMED');
     if (mode === 'RESUME') return missing;
     if (!run.entryPolicy) missing.push('ENTRY_POLICY_NOT_CONFIRMED');
-    const state = infoConsentState(run.infoConsentReview, await this.research.getConfig());
+    const config = await this.research.getConfig();
+    if (!config.informationText || !config.informationVersion || !config.consentText || !config.consentVersion ||
+        !config.debriefText || !config.debriefVersion || !config.dataRightsText || !config.findingsText ||
+        !config.minimumReadingSeconds) {
+      missing.push('PROTOCOL_NOT_READY');
+    }
+    const state = infoConsentState(run.infoConsentReview, config);
     if (state === 'NOT_REVIEWED') missing.push('INFO_CONSENT_NOT_CONFIRMED');
     if (state === 'CHANGED') missing.push('INFO_CONSENT_CHANGED');
     const pkg = await this.research.getPackageById(run.snapshot.packageId);
     if (!pkg) missing.push('SNAPSHOT:PACKAGE_NOT_FOUND');
-    else missing.push(...(await this.packageProblems(pkg, { phase: run.phase, snapshot: run.snapshot })).map((p) => `SNAPSHOT:${p}`));
+    else missing.push(...(await this.packageProblems(pkg, { phase: run.phase, snapshot: run.snapshot, questionSetId: run.snapshot.questionSetId })).map((p) => `SNAPSHOT:${p}`));
     const profileId = run.presentation.V2.profileId;
     if (!profileId) {
       missing.push('PRESENTATION_PROFILE_NOT_CONFIRMED');
@@ -394,6 +406,17 @@ export class StudyRunService {
     missing.push(...missingCapabilities(this.capabilities).map((name) => `CAPABILITY:${name}`));
     return missing;
   }
+}
+
+/** A question set may enter a Study Run only when PUBLISHED, locked, not archived, of the run's phase, and valid under the 15-question contract. */
+export function questionSetProblems(set: QuestionSetDoc | null | undefined, phase: string): string[] {
+  if (!set) return ['QUESTIONS_NOT_FOUND'];
+  const problems: string[] = [];
+  if (set.status !== 'PUBLISHED' || !set.locked) problems.push('QUESTIONS_NOT_PUBLISHED');
+  if (set.archivedAt) problems.push('QUESTIONS_ARCHIVED');
+  if (set.phase !== phase) problems.push('QUESTIONS_PHASE_MISMATCH');
+  if (!questionSetSchema.safeParse({ label: set.label, phase: set.phase, questions: set.questions }).success) problems.push('INVALID_QUESTIONS');
+  return problems;
 }
 
 function isDuplicateKey(error: unknown): boolean {
