@@ -36,6 +36,7 @@ const ALLOWED = new Set([
   'src/lib/services/invitation.service.ts',
   'src/lib/services/invitation-redemption.service.ts',
   'src/lib/services/run-session.service.ts',
+  'src/lib/services/run-overview.service.ts',
   'src/app/api/invitations/redeem/route.ts',
   'src/app/i/page.tsx',
   'src/components/participant/InvitationEntry.tsx',

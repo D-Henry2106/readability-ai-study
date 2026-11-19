@@ -5,7 +5,7 @@ import { INFO_CONSENT_REVIEW_STATEMENT } from '@/lib/validation/study-run-schema
 type Option = { id: string; label: string };
 type RunRow = { _id: string; code: string; name: string; phase: string; status: string; targetSampleSize: number; version: number; locked: boolean; packageCode: string; questionSetRevision: number | null };
 type Detail = {
-  run: { _id: string; version: number; status: string; targetSampleSize: number; quotaPerArm: number | null; entryPolicy: { legacyEntry: string } | null; locked: boolean };
+  run: { _id: string; version: number; status: string; targetSampleSize: number; quotaPerArm: number | null; entryPolicy: { legacyEntry: string } | null; locked: boolean; snapshot?: { contentRevisionId?: string } };
   readiness: { ready: boolean; missing: string[] };
   infoConsent: string;
   profiles: Array<{ _id: string; version: number; status: string; editRevision: number }>;
@@ -16,8 +16,8 @@ const MISSING_LABEL: Record<string, string> = {
   ENTRY_POLICY_NOT_CONFIRMED: 'Chưa chọn chính sách lối vào cũ.',
   INFO_CONSENT_NOT_CONFIRMED: 'Chưa xác nhận Information/Consent/Debrief.',
   INFO_CONSENT_CHANGED: 'Information/Consent/Debrief đã đổi sau lần xác nhận: cần xác nhận lại.',
-  PRESENTATION_PROFILE_NOT_CONFIRMED: 'Chưa gắn Presentation Profile V2 ở trạng thái CONFIRMED.',
-  PRESENTATION_PROFILE_MISMATCH: 'Presentation Profile V2 không khớp bài đọc của run.',
+  PRESENTATION_PROFILE_NOT_CONFIRMED: 'Chưa chuẩn bị bài đọc V2 (bấm nút "Chuẩn bị bài đọc V2").',
+  PRESENTATION_PROFILE_MISMATCH: 'Bài đọc V2 đã chuẩn bị không khớp bài đọc của run: bấm "Chuẩn bị bài đọc V2" lại.',
   PROTOCOL_NOT_READY: 'Thiếu cấu hình giao thức nghiên cứu (Thông tin, Đồng ý, Quyền dữ liệu, Thời gian đọc tối thiểu...).',
   'SNAPSHOT:QUESTIONS_NOT_PUBLISHED': 'Bộ câu hỏi chưa PUBLISHED/khóa.',
   'SNAPSHOT:INVALID_QUESTIONS': 'Bộ câu hỏi không đúng 15 câu (3 câu mỗi nhóm).',
@@ -32,7 +32,6 @@ export function StudyRunManager({ runs, packages, questionSets, canEdit }: { run
   const [busy, setBusy] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
-  const [previewInfo, setPreviewInfo] = useState('');
 
   async function api(url: string, body?: unknown): Promise<Record<string, unknown> | null> {
     setBusy(true); setMessage('');
@@ -64,12 +63,33 @@ export function StudyRunManager({ runs, packages, questionSets, canEdit }: { run
     });
     if (d) window.location.reload();
   }
-  async function profileStep(action: 'CREATE' | 'PREVIEW' | 'CONFIRM', id?: string, editRevision?: number) {
-    if (!detail || !openId) return;
-    const contentRevisionId = (await fetch(`/api/admin/study-runs/${openId}`).then((r) => r.json()).catch(() => null))?.run?.snapshot?.contentRevisionId as string | undefined;
-    const body = action === 'CREATE' ? { action, contentRevisionId, emphasis: [] } : action === 'PREVIEW' ? { action, id } : { action, id, confirm: true, expectedRevision: editRevision };
-    const d = await api('/api/admin/presentation-profiles', body);
-    if (d) { if (action === 'PREVIEW') setPreviewInfo('Đã xem trước: kiểm tra toàn vẹn ký tự V1/V2 đạt. Bạn có thể xác nhận.'); await load(openId); }
+  async function fetchDetail(): Promise<Detail | null> {
+    if (!openId) return null;
+    const d = await api(`/api/admin/study-runs/${openId}`);
+    return d ? (d as unknown as Detail) : null;
+  }
+  // One button runs the same four checked steps as before (create, preview, confirm, bind); the admin no longer sees them.
+  async function prepareV2() {
+    if (!openId) return;
+    let d = await fetchDetail();
+    if (!d) return;
+    const contentRevisionId = d.run.snapshot?.contentRevisionId;
+    if (!contentRevisionId) { setMessage('Không tìm thấy bài đọc của run.'); return; }
+    const latest = (statuses: string[]) => d!.profiles.filter((p) => statuses.includes(p.status)).sort((x, y) => y.version - x.version)[0];
+    let profile = latest(['CONFIRMED', 'LOCKED']) ?? latest(['DRAFT']);
+    if (!profile) {
+      if (!(await api('/api/admin/presentation-profiles', { action: 'CREATE', contentRevisionId, emphasis: [] }))) return;
+      d = await fetchDetail();
+      if (!d) return;
+      profile = latest(['DRAFT']);
+    }
+    if (!profile) { setMessage('Không chuẩn bị được bài đọc V2.'); return; }
+    if (profile.status === 'DRAFT') {
+      if (!(await api('/api/admin/presentation-profiles', { action: 'PREVIEW', id: profile._id }))) return;
+      if (!(await api('/api/admin/presentation-profiles', { action: 'CONFIRM', id: profile._id, confirm: true, expectedRevision: profile.editRevision }))) return;
+    }
+    const bound = await api(`/api/admin/study-runs/${openId}`, { action: 'PROFILE', expectedVersion: d.run.version, profileId: profile._id });
+    if (bound) await load(openId);
   }
 
   return <div className="stack">
@@ -79,7 +99,7 @@ export function StudyRunManager({ runs, packages, questionSets, canEdit }: { run
       <ol style={{ margin: 0, paddingLeft: 20 }}>
         <li><strong>Tạo Run:</strong> Chọn Content Package (bài đọc) và Bộ câu hỏi 15 câu đã xuất bản (dùng chung cho cả 2 nhánh V1 và V2).</li>
         <li><strong>Xác nhận Quota:</strong> Chọn mục tiêu mẫu (ví dụ 30), hệ thống tự chia đều N/2 (15 người cho V1, 15 người cho V2).</li>
-        <li><strong>Xác nhận Hồ sơ V2:</strong> Tạo, xem trước và bấm Xác nhận Presentation Profile V2 để định dạng khối câu cho bài đọc V2.</li>
+        <li><strong>Chuẩn bị bài đọc V2:</strong> Bấm một nút; hệ thống tự kiểm tra và dùng đúng nội dung V2 bạn đã soạn trong Bộ nội dung.</li>
         <li><strong>Xác nhận Văn bản thông tin:</strong> Bấm xác nhận tài liệu Thông tin nghiên cứu, Đồng ý tham gia & Giải thích sau nghiên cứu.</li>
         <li><strong>Mở Run (OPEN):</strong> Sau khi đủ 4 điều kiện trên, bấm nút &ldquo;Mở run&rdquo;.</li>
         <li><strong>Phát link mời:</strong> Sang trang <a href="/admin/invitations" style={{ fontWeight: 'bold' }}>Link thử / Invitation</a> để phát liên kết riêng cho người tham gia nhóm V1 hoặc V2.</li>
@@ -136,14 +156,11 @@ export function StudyRunManager({ runs, packages, questionSets, canEdit }: { run
             </button>
           </div>
           <div className="card stack">
-            <strong>Hồ sơ hiển thị V2 (Presentation Profile V2)</strong>
-            <p className="help">Phải ở trạng thái CONFIRMED mới gắn được vào run và phát link V2. Hệ thống không tự xác nhận.</p>
-            {detail.profiles.map((p) => <div className="row" key={p._id}><span>Profile v{p.version} · {p.status}</span>
-              {p.status === 'DRAFT' ? <><button className="btn btn-secondary" disabled={busy} onClick={() => profileStep('PREVIEW', p._id)}>Xem trước</button><button className="btn btn-secondary" disabled={busy} onClick={() => profileStep('CONFIRM', p._id, p.editRevision)}>Xác nhận</button></> : null}
-              {(p.status === 'CONFIRMED' || p.status === 'LOCKED') && !detail.run.locked ? <button className="btn btn-primary" disabled={busy || detail.run.status === 'OPEN'} onClick={() => act('PROFILE', { profileId: p._id })}>Gắn vào run</button> : null}
-            </div>)}
-            {previewInfo ? <p className="help">{previewInfo}</p> : null}
-            <button className="btn btn-secondary" disabled={busy || detail.run.locked} onClick={() => profileStep('CREATE')}>Tạo profile mới (không nhấn mạnh)</button>
+            <strong>Bài đọc V2</strong>
+            {!detail.readiness.missing.includes('PRESENTATION_PROFILE_NOT_CONFIRMED') && !detail.readiness.missing.includes('PRESENTATION_PROFILE_MISMATCH')
+              ? <p className="help">✓ Bài đọc V2 đã sẵn sàng: dùng đúng nội dung và định dạng V2 bạn soạn trong Bộ nội dung.</p>
+              : <><p className="help">Hệ thống tự kiểm tra và chuẩn bị bài đọc V2 từ nội dung bạn đã soạn. Chỉ cần bấm một nút.</p>
+                <button className="btn btn-primary" disabled={busy || detail.run.locked || detail.run.status === 'OPEN'} onClick={() => void prepareV2()}>Chuẩn bị bài đọc V2</button></>}
           </div>
           <div className="row">
             {(['OPEN', 'PAUSED', 'CLOSED'] as const).map((to) => <button key={to} className={to === 'OPEN' ? 'btn btn-primary' : 'btn btn-secondary'} disabled={busy || detail.run.status === to} onClick={() => act('TRANSITION', { to, ...(detail.run.status === 'CLOSED' && to === 'OPEN' ? { reason: window.prompt('Lý do mở lại run:') ?? '' } : {}) })}>{to === 'OPEN' ? 'Mở run (Bắt đầu tuyển)' : to === 'PAUSED' ? 'Tạm dừng tuyển' : 'Đóng tuyển (Kết thúc)'}</button>)}

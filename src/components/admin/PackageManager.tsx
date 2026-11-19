@@ -6,6 +6,7 @@ import Link from 'next/link';
 import type { QuestionItem, StudyPhase } from '@/types/research';
 import { ExperimentalText } from '@/components/participant/ExperimentalText';
 import { RichTextEditor } from './RichTextEditor';
+import { compareWording } from '@/lib/html-text';
 import { countWords } from '@/lib/experiment/content-integrity';
 import { UiIcon } from './UiIcon';
 import { useToast } from './ToastProvider';
@@ -246,6 +247,14 @@ export function PackageManager({
     () => countWords(v2Content),
     [v2Content]
   );
+  const v2Provided = !!v2Content.trim();
+  const [ignoreWarning, setIgnoreWarning] = useState(false);
+  const wording = useMemo(
+    () => (v2Content.trim() ? compareWording(rawContent, v2Content) : null),
+    [rawContent, v2Content]
+  );
+  const wordsDiffer = wording?.level === 'words';
+  const needsIgnore = wording?.level === 'punctuation' && !ignoreWarning;
 
   const filtered = useMemo(() => {
     return items.filter((item) => {
@@ -261,7 +270,7 @@ export function PackageManager({
 
   // Validation
   const baseComplete = code.trim().length > 1 && !!title.trim() && !!topic.trim();
-  const contentComplete = !!rawContent.trim();
+  const contentComplete = !!rawContent.trim() && v2Provided && !wordsDiffer && !needsIgnore;
   const ready = baseComplete && contentComplete;
 
   const checkItems = [
@@ -273,10 +282,14 @@ export function PackageManager({
     },
     {
       label: 'Bài đọc V2',
-      complete: true,
-      detail: v2Content.trim()
-        ? `${v2WordCount} từ (định dạng V2 riêng biệt)`
-        : 'Dùng văn bản V1 với định dạng dễ tiếp cận tự động'
+      complete: v2Provided && !wordsDiffer && !needsIgnore,
+      detail: !v2Provided
+        ? 'Chưa nhập V2'
+        : wordsDiffer
+          ? 'Từ ngữ V2 khác V1: xem phần so sánh ở bước 2'
+          : needsIgnore
+            ? 'Còn cảnh báo dấu câu: bấm "Bỏ qua" ở bước 2 nếu đó là chủ ý'
+            : `${v2WordCount} từ · từ ngữ giống V1`
     }
   ];
 
@@ -325,6 +338,7 @@ export function PackageManager({
     setAi(item?.aiSource ?? '');
     setRaw(item?.rawContent ?? '');
     setV2(item?.v2Content ?? '');
+    setIgnoreWarning(false);
     setEditingId(item?._id ?? null);
     setPreviewMode('both');
     setShowEditor(true);
@@ -344,7 +358,13 @@ export function PackageManager({
         return;
       }
       if (step === 1 && !contentComplete) {
-        const description = 'Hãy nhập nội dung bài đọc V1 trước khi tiếp tục.';
+        const description = !rawContent.trim()
+          ? 'Hãy nhập nội dung bài đọc V1 trước khi tiếp tục.'
+          : !v2Provided
+            ? 'Hãy nhập nội dung bài đọc V2 (có thể bấm "Sao chép từ V1" rồi định dạng lại).'
+            : wordsDiffer
+              ? 'Từ ngữ của V1 và V2 khác nhau. Hãy sửa theo phần so sánh bên dưới.'
+              : 'Còn cảnh báo dấu câu giữa V1 và V2. Bấm "Bỏ qua cảnh báo" nếu đó là chủ ý.';
         setMessage(description);
         toast({ kind: 'info', title: 'Cần thêm thông tin', description });
         return;
@@ -357,7 +377,7 @@ export function PackageManager({
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!ready) {
-      const description = 'Vui lòng hoàn thành thông tin cơ bản và nội dung bài đọc V1.';
+      const description = 'Vui lòng hoàn thành thông tin cơ bản và nhập V1, V2 có từ ngữ giống nhau (dấu câu khác thì bấm "Bỏ qua cảnh báo").';
       setMessage(description);
       toast({ kind: 'error', title: 'Bản nháp chưa hoàn chỉnh', description });
       return;
@@ -608,7 +628,7 @@ export function PackageManager({
                       <div className="space-between">
                         <div>
                           <span className="package-version package-version--v1">V1</span>
-                          <strong>Nội dung chuẩn (Standard)</strong>
+                          <strong>Bản chuẩn (đối chứng)</strong>
                         </div>
                         <span className="package-chip">{v1WordCount} từ</span>
                       </div>
@@ -618,14 +638,11 @@ export function PackageManager({
                         </span>
                         <RichTextEditor
                           value={rawContent}
-                          onChange={setRaw}
-                          placeholder="Dán hoặc soạn nội dung bài đọc chuẩn V1 tại đây…"
+                          onChange={(value) => { setRaw(value); setIgnoreWarning(false); }}
+                          placeholder="Dán hoặc soạn bài đọc V1 tại đây và định dạng theo ý bạn…"
                           minHeight={250}
                         />
                       </label>
-                      <small className="help">
-                        Nội dung nguyên bản được dùng làm đối chứng chuẩn trong nghiên cứu.
-                      </small>
                     </div>
 
                     {/* V2 Editor */}
@@ -633,17 +650,15 @@ export function PackageManager({
                       <div className="space-between">
                         <div>
                           <span className="package-version package-version--v2">V2</span>
-                          <strong>Nội dung dễ tiếp cận (Accessible)</strong>
+                          <strong>Bản thử nghiệm</strong>
                         </div>
                         <div className="row" style={{ gap: 8 }}>
-                          <span className="package-chip">
-                            {v2Content.trim() ? `${v2WordCount} từ` : 'Kế thừa V1'}
-                          </span>
-                          {rawContent.trim() && !v2Content.trim() && (
+                          <span className="package-chip">{v2Provided ? `${v2WordCount} từ` : 'Chưa nhập'}</span>
+                          {rawContent.trim() && (
                             <button
                               type="button"
                               className="btn btn-secondary btn-small"
-                              onClick={() => setV2(rawContent)}
+                              onClick={() => { setV2(rawContent); setIgnoreWarning(false); }}
                             >
                               Sao chép từ V1
                             </button>
@@ -652,19 +667,59 @@ export function PackageManager({
                       </div>
                       <label className="field">
                         <span>
-                          Văn bản V2 <span className="package-optional">(tùy chọn định dạng riêng)</span>
+                          Văn bản V2 <em>*</em>
                         </span>
                         <RichTextEditor
                           value={v2Content}
-                          onChange={setV2}
-                          placeholder="Nhập hoặc định dạng văn bản V2 (hoặc để trống để tự động áp dụng phân đoạn dễ tiếp cận từ V1)…"
+                          onChange={(value) => { setV2(value); setIgnoreWarning(false); }}
+                          placeholder="Soạn bài đọc V2: giữ nguyên từng chữ của V1, chỉ khác định dạng…"
                           minHeight={250}
                         />
                       </label>
-                      <small className="help">
-                        V2 cho phép cấu trúc độc lập: có thể chia đoạn ngắn hơn, thêm ngắt dòng hoặc bố cục giúp dễ tiếp cận.
-                      </small>
                     </div>
+                  </div>
+
+                  <div
+                    className={
+                      !v2Provided || wordsDiffer
+                        ? 'notice notice-danger'
+                        : wording?.level === 'punctuation' && !ignoreWarning
+                          ? 'notice notice-warning'
+                          : 'notice notice-success'
+                    }
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {!v2Provided ? (
+                      <span>Chưa nhập V2. Bấm &ldquo;Sao chép từ V1&rdquo; rồi định dạng lại, hoặc dán nội dung V2.</span>
+                    ) : wordsDiffer && wording?.difference ? (
+                      <div className="stack">
+                        <strong>Từ ngữ của V1 và V2 KHÁC nhau (ký tự thứ {wording.difference.index + 1} sau khi bỏ định dạng):</strong>
+                        <div>V1: <code>{wording.difference.v1}</code></div>
+                        <div>V2: <code>{wording.difference.v2}</code></div>
+                        <small>Cần sửa lại để hai bản có cùng từ ngữ. Chỉ hiện chỗ khác đầu tiên.</small>
+                      </div>
+                    ) : wording?.level === 'punctuation' && wording.difference ? (
+                      <div className="stack">
+                        <strong>Từ ngữ giống nhau, nhưng dấu câu / chữ hoa / khoảng trắng có khác (ký tự thứ {wording.difference.index + 1}):</strong>
+                        <div>V1: <code>{wording.difference.v1}</code></div>
+                        <div>V2: <code>{wording.difference.v2}</code></div>
+                        {ignoreWarning ? (
+                          <small>✓ Đã bỏ qua cảnh báo này. Bạn có thể tiếp tục lưu và xuất bản.</small>
+                        ) : (
+                          <div>
+                            <button type="button" className="btn btn-secondary btn-small" onClick={() => setIgnoreWarning(true)}>
+                              Bỏ qua cảnh báo
+                            </button>{' '}
+                            <small>Chỉ hiện chỗ khác đầu tiên. Bấm bỏ qua nếu khác biệt này là chủ ý.</small>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <span>
+                        <strong>✓ Từ ngữ và dấu câu của V1 và V2 giống nhau.</strong> Chỉ khác định dạng.
+                      </span>
+                    )}
                   </div>
                 </div>
               )}

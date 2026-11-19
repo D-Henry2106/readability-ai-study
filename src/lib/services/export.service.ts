@@ -56,7 +56,7 @@ export class ExportService {
   async run(phase?: StudyPhase, filters: ResearchFilters = {}): Promise<string> {
     const sessions = (await this.repo.listAllSessionsForExport(phase, filters)).filter((s) => s.studyRunId);
     const rows = [line(['session_id','participant_id','invitation_id','study_run_id','variant','presentation_version','question_set_id','question_set_revision',
-      'package_code','package_revision','status','validity','device','age_range','gender','field_of_study','year_of_study','ai_usage_frequency','online_reading_frequency',
+      'package_code','package_revision','status','validity','device','gender','field_of_study','year_of_study','ai_usage_frequency','online_reading_frequency',
       'reading_seconds','scroll_count','max_scroll_depth_percent','score','score_max','answers','created_at','completed_at'])];
     for (const session of sessions) {
       const bundle = await this.repo.getSessionBundle(session.id);
@@ -64,7 +64,7 @@ export class ExportService {
       const test = bundle.tests.find((t) => t.roundNo === 1);
       rows.push(line([session.id, session.participantId, session.invitationId?.toHexString(), session.studyRunId?.toHexString(), session.presentationVariant, session.presentationVersion,
         session.questionSetId.toHexString(), session.questionSetRevision, session.assignedPackageCode, session.assignedPackageRevision, session.status, session.validityFlag, session.deviceType,
-        bundle.demographics?.ageRange, bundle.demographics?.gender, bundle.demographics?.fieldOfStudy, bundle.demographics?.yearOfStudy, bundle.demographics?.aiUsageFrequency, bundle.demographics?.onlineReadingFrequency,
+        bundle.demographics?.gender, bundle.demographics?.fieldOfStudy, bundle.demographics?.yearOfStudy, bundle.demographics?.aiUsageFrequency, bundle.demographics?.onlineReadingFrequency,
         reading?.readingSeconds, reading?.scrollCount, reading?.maxScrollDepthPercent, test?.score, test?.answers.length,
         test ? JSON.stringify(test.answers.map((a) => ({ questionId: a.questionId, selectedOptionId: a.selectedOptionId, isCorrect: a.isCorrect }))) : null,
         session.createdAt, session.completedAt]));
@@ -85,7 +85,7 @@ export class ExportService {
   async wide(phase?: StudyPhase, filters: ResearchFilters = {}): Promise<string> {
     const sessions = await this.repo.listAllSessionsForExport(phase, filters);
     const header = [
-      'session_id','phase','group','device','age_range','gender','field_of_study','year_of_study','ai_usage_frequency','online_reading_frequency',
+      'session_id','phase','group','device','gender','field_of_study','year_of_study','ai_usage_frequency','online_reading_frequency',
       'package_id','package_code','package_revision','package_topic','content_revision_id','question_set_id','round1_presentation','round2_presentation','v1_score','v2_score','v2_minus_v1',
       'v1_reading_seconds','v2_reading_seconds','v1_scroll_count','v2_scroll_count','v1_max_scroll_depth_percent','v2_max_scroll_depth_percent',
       'completed','status','validity','validity_reason','created_at','completed_at','answers_round1','answers_round2'
@@ -104,7 +104,7 @@ export class ExportService {
       const v2Reading = [r1, r2].find((r) => r?.presentation === 'V2');
       rows.push(line([
         session.id, session.phase, session.groupCode, session.deviceType,
-        bundle.demographics?.ageRange, bundle.demographics?.gender, bundle.demographics?.fieldOfStudy, bundle.demographics?.yearOfStudy,
+        bundle.demographics?.gender, bundle.demographics?.fieldOfStudy, bundle.demographics?.yearOfStudy,
         bundle.demographics?.aiUsageFrequency, bundle.demographics?.onlineReadingFrequency,
         session.assignedPackageId?.toString(), session.assignedPackageCode, session.assignedPackageRevision, session.assignedPackageTopic, session.contentRevisionId.toHexString(), session.questionSetId.toHexString(), presentations[0], presentations[1],
         v1Test?.score, v2Test?.score, v1Test && v2Test ? v2Test.score - v1Test.score : null,

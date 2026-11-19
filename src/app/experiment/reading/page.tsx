@@ -33,7 +33,7 @@ export default async function Page() {
       wide
     >
       <ReadingClient
-        rawContent={(!isStudyRun && presentation === 'V2' && content.v2Content) ? content.v2Content : content.rawContent}
+        rawContent={(presentation === 'V2' && content.v2Content) ? content.v2Content : content.rawContent}
         presentation={presentation}
         minimumSeconds={minimumReadingSeconds}
         emphasis={profile?.emphasis}

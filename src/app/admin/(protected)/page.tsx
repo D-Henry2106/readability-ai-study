@@ -3,12 +3,23 @@ import type { Metadata } from 'next';
 import { ResearchRepository } from '@/lib/repositories/research.repository';
 import { ReadinessService } from '@/lib/services/readiness.service';
 import { AnalysisService } from '@/lib/services/analysis.service';
+import { RunOverviewService } from '@/lib/services/run-overview.service';
 import { UiIcon } from '@/components/admin/UiIcon';
 
 export const metadata: Metadata = {
   title: 'Bảng điều khiển quản trị',
   robots: { index: false, follow: false }
 };
+
+const PROTOCOL_CODES = new Set([
+  'PARTICIPANT_INFORMATION_SHEET',
+  'CONSENT_WORDING',
+  'DEBRIEF_WORDING',
+  'DATA_RIGHTS_WORDING',
+  'FINDINGS_INFORMATION',
+  'MINIMUM_READING_TIME'
+]);
+const RUN_STATUS_LABEL: Record<string, string> = { DRAFT: 'Bản nháp', OPEN: 'Đang mở', PAUSED: 'Tạm dừng', CLOSED: 'Đã đóng' };
 
 const opsRunsRoute = ['/admin', ['study', 'runs'].join('-')].join('/');
 const opsLinksRoute = ['/admin', ['invit', 'ations'].join('')].join('/');
@@ -23,7 +34,7 @@ export default async function Page({
   const activeConfig = await repo.getConfig();
   const phase = q.phase === 'PILOT' || q.phase === 'MAIN' ? q.phase : activeConfig.phase;
 
-  const [config, ready, counts, publishedCount, analysis, packages, questionSets] =
+  const [config, ready, counts, publishedCount, analysis, packages, questionSets, runs] =
     await Promise.all([
       repo.getConfig(),
       new ReadinessService(repo).check(),
@@ -31,16 +42,18 @@ export default async function Page({
       repo.countPublishedPackages(phase),
       new AnalysisService(repo).overview(phase),
       repo.listPackages(),
-      repo.listQuestionSets()
+      repo.listQuestionSets(),
+      new RunOverviewService().list()
     ]);
 
   const publishedQuestionSets = questionSets.filter((qs) => qs.status === 'PUBLISHED' && !qs.archivedAt);
   const publishedPackages = packages.filter((pkg) => pkg.status === 'PUBLISHED');
 
-  const progress = Math.min(
-    100,
-    Math.round((counts.valid / Math.max(1, config.minimumValidTarget)) * 100)
-  );
+  const openRuns = runs.filter((run) => run.status === 'OPEN').length;
+  const protocolChecks = ready.checks.filter((check) => PROTOCOL_CODES.has(check.code));
+  const protocolMissing = protocolChecks.filter((check) => check.status !== 'PASS').length;
+  const percent = (value: number, quota: number | null) =>
+    quota ? Math.min(100, Math.round((value / quota) * 100)) : 0;
 
   return (
     <div className="stack admin-dashboard">
@@ -55,11 +68,11 @@ export default async function Page({
         <div className="row" style={{ alignItems: 'center', gap: 12 }}>
           <span
             className={`package-state ${
-              ready.ready ? 'package-state--success' : 'package-state--warning'
+              openRuns > 0 ? 'package-state--success' : 'package-state--warning'
             }`}
           >
             <span className="package-state-dot" />
-            {ready.ready ? 'Hệ thống sẵn sàng' : 'Cần kiểm tra điều kiện'}
+            {openRuns > 0 ? `${openRuns} đợt đang mở` : 'Chưa có đợt nào đang mở'}
           </span>
         </div>
       </div>
@@ -119,7 +132,7 @@ export default async function Page({
               <span className="package-chip">Bước 2</span>
             </div>
             <h4>Bộ nội dung (V1/V2)</h4>
-            <p className="help">Nhập bài đọc V1/V2 và chọn Bộ câu hỏi liên kết.</p>
+            <p className="help">Nhập bài đọc V1 và V2 (chữ giống nhau, chỉ khác định dạng).</p>
             <div className="admin-workflow-stat">
               <strong>{packages.length}</strong>
               <small>({publishedPackages.length} đã xuất bản)</small>
@@ -174,30 +187,77 @@ export default async function Page({
         </div>
       </section>
 
-      {/* Participant Progress & Validity Metrics */}
+      {/* Research runs: quota progress and personal links */}
+      <section className="card stack" aria-label="Các đợt nghiên cứu">
+        <div className="space-between">
+          <div>
+            <h3>Các đợt nghiên cứu</h3>
+            <p className="help">Tiến độ người tham gia hợp lệ ở từng nhóm và số link riêng đã gửi.</p>
+          </div>
+          <Link href={opsRunsRoute} className="btn btn-secondary btn-small">
+            Quản lý đợt &rarr;
+          </Link>
+        </div>
+
+        {runs.length === 0 ? (
+          <p className="help">Chưa có đợt nghiên cứu nào. Hãy tạo đợt ở Bước 3.</p>
+        ) : (
+          runs.map((run) => (
+            <div
+              key={run.id}
+              className="stack-sm"
+              style={{ padding: '12px 0', borderTop: '1px solid rgba(128,128,128,0.2)' }}
+            >
+              <div className="space-between">
+                <div>
+                  <strong>{run.code}</strong> &mdash; {run.name}{' '}
+                  <span className="package-chip">{RUN_STATUS_LABEL[run.status] ?? run.status}</span>{' '}
+                  <span className="package-chip">{run.phase}</span>
+                </div>
+                <small className="help">
+                  Link riêng: {run.linksIssued} đã tạo &middot; {run.linksRedeemed} đã dùng &middot; {run.linksUnused} chưa dùng
+                  {run.linksRevoked > 0 ? ` · ${run.linksRevoked} đã thu hồi` : ''}
+                </small>
+              </div>
+              <div className="grid-2col">
+                {([['V1 (chuẩn)', run.v1Valid], ['V2 (dễ tiếp cận)', run.v2Valid]] as const).map(([label, valid]) => (
+                  <div key={label} className="stack-sm">
+                    <div className="space-between">
+                      <span className="help">{label}</span>
+                      <strong>
+                        {valid}
+                        {run.quotaPerArm ? ` / ${run.quotaPerArm}` : ''} hợp lệ
+                      </strong>
+                    </div>
+                    <div
+                      className="progress"
+                      role="progressbar"
+                      aria-valuenow={percent(valid, run.quotaPerArm)}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                    >
+                      <span style={{ width: `${percent(valid, run.quotaPerArm)}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {run.quotaPerArm === null ? (
+                <small className="help">Chưa xác nhận hạn mức mỗi nhóm cho đợt này.</small>
+              ) : null}
+            </div>
+          ))
+        )}
+      </section>
+
+      {/* Participant sessions of the selected phase and V1 vs V2 comparison */}
       <div className="grid-2col" style={{ alignItems: 'start' }}>
         <section className="card stack">
-          <div className="space-between">
-            <div>
-              <h3>Tiến độ thu thập ({phase})</h3>
-              <p className="help">
-                {counts.valid} phiên hợp lệ / mục tiêu tối thiểu {config.minimumValidTarget}
-              </p>
-            </div>
-            <span className="package-chip">{progress}%</span>
+          <div>
+            <h3>Phiên tham gia ({phase})</h3>
+            <p className="help">Tất cả phiên trong giai đoạn đang xem.</p>
           </div>
 
-          <div
-            className="progress"
-            role="progressbar"
-            aria-valuenow={progress}
-            aria-valuemin={0}
-            aria-valuemax={100}
-          >
-            <span style={{ width: `${progress}%` }} />
-          </div>
-
-          <div className="metric-grid" style={{ marginTop: 12 }}>
+          <div className="metric-grid">
             <div className="metric">
               <span className="help">Đã bắt đầu</span>
               <strong>{counts.started}</strong>
@@ -300,37 +360,40 @@ export default async function Page({
         </section>
       </div>
 
-      {/* System Readiness Checklist */}
-      <section className="card stack">
-        <div className="space-between">
-          <div>
-            <h3>Điều kiện sẵn sàng của hệ thống</h3>
+      {/* Protocol configuration (collapsed when complete) */}
+      <details className="card stack" open={protocolMissing > 0}>
+        <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
+          Cấu hình giao thức &mdash;{' '}
+          {protocolMissing === 0 ? 'đầy đủ' : `còn thiếu ${protocolMissing} mục (cần có trước khi mở đợt)`}
+        </summary>
+        <div className="stack" style={{ marginTop: 12 }}>
+          <div className="space-between">
             <p className="help">
-              Kiểm tra các thành phần giao thức và văn bản pháp lý cần thiết trước khi mở nghiên cứu.
+              Văn bản thông tin, đồng ý, giải thích sau nghiên cứu, quyền dữ liệu, thông tin kết quả và thời gian đọc tối thiểu.
             </p>
+            <Link href="/admin/config" className="btn btn-secondary btn-small">
+              Cấu hình giao thức &rarr;
+            </Link>
           </div>
-          <Link href="/admin/config" className="btn btn-secondary btn-small">
-            Cấu hình giao thức &rarr;
-          </Link>
-        </div>
 
-        <div className="package-checklist">
-          {ready.checks.map((check) => (
-            <div className="package-check-item" key={check.code}>
-              <span className={`package-check-icon ${check.status === 'PASS' ? 'is-done' : ''}`}>
-                <UiIcon name={check.status === 'PASS' ? 'check' : 'alert'} />
-              </span>
-              <div>
-                <strong>{check.label}</strong>
-                <small>{check.status === 'PASS' ? 'Đã hoàn tất cấu hình' : check.detail}</small>
+          <div className="package-checklist">
+            {protocolChecks.map((check) => (
+              <div className="package-check-item" key={check.code}>
+                <span className={`package-check-icon ${check.status === 'PASS' ? 'is-done' : ''}`}>
+                  <UiIcon name={check.status === 'PASS' ? 'check' : 'alert'} />
+                </span>
+                <div>
+                  <strong>{check.label}</strong>
+                  <small>{check.status === 'PASS' ? 'Đã hoàn tất cấu hình' : check.detail}</small>
+                </div>
+                <span className={`package-check-result ${check.status === 'PASS' ? 'is-done' : ''}`}>
+                  {check.status === 'PASS' ? 'Đạt' : 'Chưa đủ'}
+                </span>
               </div>
-              <span className={`package-check-result ${check.status === 'PASS' ? 'is-done' : ''}`}>
-                {check.status === 'PASS' ? 'Đạt' : 'Chưa đủ'}
-              </span>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      </section>
+      </details>
     </div>
   );
 }

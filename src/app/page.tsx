@@ -90,7 +90,7 @@ export default async function HomePage() {
                 ? 'Tiếp tục phiên nghiên cứu'
                 : readiness.ready
                   ? 'Tham gia nghiên cứu'
-                  : 'Trạng thái nghiên cứu'}
+                  : 'Cách tham gia'}
           </h2>
 
           {terminal ? (
@@ -122,11 +122,11 @@ export default async function HomePage() {
               <StartButton />
             </>
           ) : (
-            <div className="notice notice-warning stack-sm">
-              <strong>Nghiên cứu hiện chưa mở.</strong>
+            <div className="notice notice-info stack-sm">
+              <strong>Bạn cần có link mời riêng để tham gia.</strong>
               <span>
-                Vui lòng quay lại sau khi người nghiên cứu hoàn tất và công bố tài liệu đã phê
-                duyệt.
+                Nghiên cứu này chỉ nhận người tham gia qua link do nhà nghiên cứu gửi trực tiếp cho bạn. Hãy mở link đó để bắt
+                đầu. Nếu bạn chưa nhận được link, vui lòng liên hệ nhà nghiên cứu.
               </span>
             </div>
           )}

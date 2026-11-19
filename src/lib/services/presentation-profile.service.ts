@@ -1,4 +1,3 @@
-import { isHtml } from '@/lib/sanitize-html';
 import { ObjectId } from 'mongodb';
 import { assertRole } from '@/lib/auth/roles';
 import { contentHash } from '@/lib/experiment/content-integrity';
@@ -294,7 +293,6 @@ export class PresentationProfileService {
     if (content.status !== 'PUBLISHED' || !content.locked) problemas.push('CONTENT_NOT_PUBLISHED');
     if (!content.rawContent.trim() || content.contentHash !== contentHash(content.rawContent)) problemas.push('INVALID_CONTENT_HASH');
     if (!hasExactAccessiblePresentationIntegrity(content.rawContent)) problemas.push('INVALID_BLOCK_INTEGRITY');
-    if (isHtml(content.rawContent)) problemas.push('RICH_TEXT_NOT_SUPPORTED_BY_PROFILE');
     if (problemas.length) throw new StudyRunError('CONTENT_NOT_ELIGIBLE', 409, problemas);
     return content;
   }
