@@ -1,6 +1,9 @@
 import type { Metadata } from 'next';
 import './globals.css';
 
+// CSP nonces exist only per request, so every page must be rendered dynamically (see src/proxy.ts).
+export const dynamic = 'force-dynamic';
+
 export const metadata: Metadata = {
   title: { default: 'Nghiên cứu đọc hiểu', template: '%s | Nghiên cứu đọc hiểu' },
   description: 'Nền tảng nghiên cứu đọc hiểu trực tuyến có kiểm soát.',

@@ -6,11 +6,13 @@ export class AuditService {
 
   async record(input: {
     username: string;
-    role: AdminRole;
+    role: AdminRole | 'SYSTEM';
     action: string;
     targetType: string;
     targetId?: string | null;
     metadata?: Record<string, string | number | boolean | null>;
+    /** When set, the entry is written at most once per key (safe to retry after a crash). */
+    dedupeKey?: string;
   }) {
     await this.repo.addAudit({
       username: input.username,
@@ -19,7 +21,8 @@ export class AuditService {
       targetType: input.targetType,
       targetId: input.targetId ?? null,
       metadata: input.metadata ?? {},
-      createdAt: new Date()
+      createdAt: new Date(),
+      ...(input.dedupeKey ? { dedupeKey: input.dedupeKey } : {})
     });
   }
 }

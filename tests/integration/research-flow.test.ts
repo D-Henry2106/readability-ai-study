@@ -1,14 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ObjectId } from 'mongodb';
 import { resetAndSeedReady, withTestDb } from '../helpers/test-db';
-import { ensureIndexes } from '@/lib/db/indexes';
 import { SessionService } from '@/lib/services/session.service';
 import { ResearchRepository } from '@/lib/repositories/research.repository';
 import { ContentService } from '@/lib/services/content.service';
 import { ExportService } from '@/lib/services/export.service';
 
 describe('MongoDB integration flow', () => {
-  beforeEach(async () => { await resetAndSeedReady(); await ensureIndexes(); });
+  beforeEach(async () => { await resetAndSeedReady(); });
 
   it('creates one anonymous research session pinned to published revisions', async () => {
     const session = await new SessionService().create('desktop');

@@ -14,8 +14,21 @@ export async function GET() {
     const repo = new ResearchRepository();
     const packages = await repo.listPackages();
     return NextResponse.json(await Promise.all(packages.map(async pkg => {
-      const [content, set] = await Promise.all([repo.getContentById(pkg.contentRevisionId), repo.getQuestionSetById(pkg.questionSetId)]);
-      return { ...pkg, rawContent: content?.rawContent ?? '', contentRevision: content?.revision ?? null, questions: set?.questions ?? [], questionRevision: set?.revision ?? null };
+      const [content, set] = await Promise.all([
+        repo.getContentById(pkg.contentRevisionId),
+        pkg.questionSetId ? repo.getQuestionSetById(pkg.questionSetId) : Promise.resolve(null)
+      ]);
+      return {
+        ...pkg,
+        rawContent: content?.rawContent ?? '',
+        v2Content: content?.v2Content ?? pkg.v2Content ?? '',
+        contentRevision: content?.revision ?? null,
+        questionSetId: pkg.questionSetId ? pkg.questionSetId.toHexString() : null,
+        questionSetLabel: set?.label ?? '',
+        questions: set?.questions ?? [],
+        questionRevision: set?.revision ?? null,
+        validation: await new PackageService(repo).checklist(pkg)
+      };
     })));
   } catch (e) { return jsonError(e); }
 }
@@ -45,9 +58,18 @@ export async function POST(req: NextRequest) {
       if (!await repo.archivePackage(new ObjectId(id))) return NextResponse.json({ error: 'Chỉ được lưu trữ bộ đã xuất bản.' }, { status: 409 });
     }
     if (action === 'CLONE') {
-      const [content, set] = await Promise.all([repo.getContentById(pkg.contentRevisionId), repo.getQuestionSetById(pkg.questionSetId)]);
-      if (!content || !set) return NextResponse.json({ error: 'Thiếu dữ liệu phiên bản cũ.' }, { status: 409 });
-      const cloned = await service.createDraft({ code: pkg.code, title: pkg.title, topic: pkg.topic, description: pkg.description, phase: pkg.phase, rawContent: content.rawContent, questions: set.questions, aiSource: pkg.aiSource });
+      const content = await repo.getContentById(pkg.contentRevisionId);
+      if (!content) return NextResponse.json({ error: 'Thiếu dữ liệu phiên bản cũ.' }, { status: 409 });
+      const cloned = await service.createDraft({
+        code: pkg.code,
+        title: pkg.title,
+        topic: pkg.topic,
+        description: pkg.description,
+        phase: pkg.phase,
+        rawContent: content.rawContent,
+        v2Content: content.v2Content ?? pkg.v2Content ?? null,
+        aiSource: pkg.aiSource
+      });
       return NextResponse.json({ ok: true, id: cloned.toHexString() });
     }
     await new AuditService(repo).record({ username: admin.username, role: admin.role, action: `PACKAGE_${action}`, targetType: 'content_package', targetId: id });

@@ -1,4 +1,4 @@
-import { ObjectId, type Filter } from 'mongodb';
+import { ObjectId, type Collection, type Filter } from 'mongodb';
 import { collections } from '@/lib/db/collections';
 import type {
   AdminAuditDoc,
@@ -10,13 +10,129 @@ import type {
   ExperimentConfigDoc,
   ExperimentEventDoc,
   GroupCode,
+  Presentation,
   QuestionSetDoc,
+  QuotaStatus,
   ReadingSessionDoc,
   SessionDoc,
+  SessionQuotaTransition,
   StudyPhase,
   TestAttemptDoc,
-  ValidityFlag
+  ValidityFlag,
+  VariantLock,
+  VariantLocksDoc
 } from '@/types/research';
+import type { StudyRunDoc } from '@/types/study-run';
+
+/** Session/export filters shared by the dashboard, the session list and every CSV. `variant` is the invitation's V1/V2 (P5). */
+export type SessionExportFilters = { group?: GroupCode; packageCode?: string; revision?: number; variant?: Presentation; studyRunId?: string };
+
+const UNLOCKED: VariantLock = { locked: false, changedBy: null, changedAt: null };
+
+/** Read/write surface of the per-variant intake lock (P5-D). Implemented by ResearchRepository and by the test fakes. */
+export interface VariantLockStore {
+  getVariantLocks(): Promise<Record<Presentation, VariantLock>>;
+  setVariantLock(variant: Presentation, locked: boolean, by: string, at: Date): Promise<void>;
+}
+
+/** Fails the claim while a COMMITTED/RECOVERED transition still owes its audit entry (`auditLogged === false`). */
+const AUDIT_SETTLED_GUARD = {
+  $nor: [{ 'quotaTransition.state': { $in: ['COMMITTED', 'RECOVERED'] }, 'quotaTransition.auditLogged': false }]
+} as Filter<SessionDoc>;
+
+export interface ClaimRunSessionQuotaTransitionInput {
+  sessionId: string;
+  studyRunId: ObjectId;
+  variant: Presentation;
+  expectedValidityFlag: ValidityFlag;
+  expectedQuotaStatus: QuotaStatus | null;
+  expectedReviewedAt?: Date | null;
+  expectedQuotaRecordedAt?: Date | null;
+  nextValidityFlag: ValidityFlag;
+  nextQuotaStatus: QuotaStatus | null;
+  reason: string | null;
+  reviewedBy: string;
+  checklistVersion: number | null;
+  recordQuotaMeta: boolean;
+  at: Date;
+  transition?: SessionQuotaTransition | null;
+}
+
+export interface FinalizeRunSessionQuotaStatusInput {
+  sessionId: string;
+  studyRunId: ObjectId;
+  variant: Presentation;
+  expectedValidityFlag?: ValidityFlag;
+  expectedQuotaStatus: QuotaStatus | null;
+  expectedReviewedAt: Date;
+  quotaStatus: QuotaStatus;
+  recordedBy: string;
+  at: Date;
+  transitionId?: string;
+  transitionState?: 'COMMITTED' | 'RECOVERED';
+  auditLogged?: boolean;
+}
+
+export interface RevertRunSessionValidityClaimInput {
+  sessionId: string;
+  studyRunId: ObjectId;
+  expectedReviewedAt: Date;
+  claimedValidityFlag?: ValidityFlag;
+  claimedQuotaStatus?: QuotaStatus | null;
+  transitionId?: string;
+  previousValidityFlag: ValidityFlag;
+  previousReason: string | null;
+  previousReviewedBy?: string;
+  previousReviewedAt?: Date;
+  previousChecklistVersion?: number | null;
+  previousQuotaStatus: QuotaStatus | null;
+  previousQuotaRecordedAt?: Date | null;
+  previousQuotaRecordedBy?: string | null;
+  previousUpdatedAt?: Date;
+}
+
+export interface ClaimSupplementalPromotionInput {
+  sessionId: string;
+  studyRunId: ObjectId;
+  variant: Presentation;
+  expectedRecordedAt: Date | null;
+  recordedBy: string;
+  at: Date;
+  transition?: SessionQuotaTransition | null;
+}
+
+export interface RevertSupplementalPromotionInput {
+  sessionId: string;
+  studyRunId: ObjectId;
+  variant: Presentation;
+  claimAt: Date;
+  transitionId?: string;
+  previousRecordedAt: Date | null;
+  previousRecordedBy: string | null;
+  previousUpdatedAt?: Date;
+}
+
+/** Narrow session store port used by StudyRunQuotaService (P4). */
+export interface QuotaSessionStore {
+  getSession(id: string): Promise<SessionDoc | null>;
+  claimRunSessionQuotaTransition(input: ClaimRunSessionQuotaTransitionInput): Promise<SessionDoc | null>;
+  finalizeRunSessionQuotaStatus(input: FinalizeRunSessionQuotaStatusInput): Promise<SessionDoc | null>;
+  revertRunSessionValidityClaim(input: RevertRunSessionValidityClaimInput): Promise<SessionDoc | null>;
+  claimSupplementalQuotaPromotion(input: ClaimSupplementalPromotionInput): Promise<SessionDoc | null>;
+  finalizeSupplementalQuotaPromotion(input: {
+    sessionId: string;
+    studyRunId: ObjectId;
+    variant: Presentation;
+    claimAt: Date;
+    transitionId?: string;
+    transitionState?: 'COMMITTED' | 'RECOVERED';
+    auditLogged?: boolean;
+  }): Promise<SessionDoc | null>;
+  revertSupplementalQuotaPromotion(input: RevertSupplementalPromotionInput): Promise<SessionDoc | null>;
+  /** Marks `quotaTransition.auditLogged = true` once the idempotent audit entry of that transition exists. */
+  markRunSessionQuotaAuditLogged(sessionId: string, transitionId: string): Promise<void>;
+  countRunQuotaFromSessions(studyRunId: ObjectId): Promise<StudyRunDoc['arms']>;
+}
 
 const defaultConfig: ExperimentConfigDoc = {
   key: 'active',
@@ -40,20 +156,10 @@ const defaultConfig: ExperimentConfigDoc = {
   updatedAt: new Date(0)
 };
 
-export class ResearchRepository {
+export class ResearchRepository implements QuotaSessionStore, VariantLockStore {
   async getConfig(): Promise<ExperimentConfigDoc> {
     const { experimentConfig } = await collections();
     return (await experimentConfig.findOne({ key: 'active' })) ?? defaultConfig;
-  }
-
-  async upsertConfig(update: Partial<Omit<ExperimentConfigDoc, '_id' | 'key'>>): Promise<ExperimentConfigDoc> {
-    const { experimentConfig } = await collections();
-    await experimentConfig.updateOne(
-      { key: 'active' },
-      { $set: { ...update, updatedAt: new Date() }, $setOnInsert: { key: 'active' } },
-      { upsert: true }
-    );
-    return (await experimentConfig.findOne({ key: 'active' })) as ExperimentConfigDoc;
   }
 
   /** Compare-and-swap: validation happens before this single write. Never unpublish on rejection. */
@@ -114,6 +220,12 @@ export class ResearchRepository {
   async updateDraftPackage(id: ObjectId, update: Partial<ContentPackageDoc>): Promise<ContentPackageDoc | null> {
     const { contentPackages } = await collections();
     return contentPackages.findOneAndUpdate({ _id: id, status: 'DRAFT' }, { $set: { ...update, updatedAt: new Date() } }, { returnDocument: 'after' });
+  }
+
+  /** True when a content/question revision belongs to a content package (those may only change through the package flow). */
+  async isRevisionOwnedByPackage(kind: 'content' | 'questions', id: ObjectId): Promise<boolean> {
+    const { contentPackages } = await collections();
+    return (await contentPackages.countDocuments(kind === 'content' ? { contentRevisionId: id } : { questionSetId: id }, { limit: 1 })) > 0;
   }
 
   async publishPackage(id: ObjectId): Promise<ContentPackageDoc | null> {
@@ -197,8 +309,22 @@ export class ResearchRepository {
   async completeSessionIfReady(id: string): Promise<SessionDoc | null> {
     const { sessions } = await collections();
     return sessions.findOneAndUpdate(
-      { id, currentStage: 'TEST_2', status: 'ACTIVE' },
+      { id, $or: [{ currentStage: 'TEST_1', status: 'ACTIVE' }, { currentStage: 'TEST_2', status: 'ACTIVE' }] },
       { $set: { currentStage: 'COMPLETED', status: 'COMPLETED', completedAt: new Date(), updatedAt: new Date() } },
+      { returnDocument: 'after' }
+    );
+  }
+
+  /**
+   * P4: Completes an ACTIVE Study Run session directly from TEST_1 (single-round flow, architecture §4, AC-09).
+   * Requires `studyRunId` to exist so a legacy session can never complete from TEST_1.
+   */
+  async completeRunSessionIfReady(id: string): Promise<SessionDoc | null> {
+    const { sessions } = await collections();
+    const now = new Date();
+    return sessions.findOneAndUpdate(
+      { id, currentStage: 'TEST_1', status: 'ACTIVE', studyRunId: { $exists: true, $ne: null as never } },
+      { $set: { currentStage: 'COMPLETED', status: 'COMPLETED', completedAt: now, updatedAt: now } },
       { returnDocument: 'after' }
     );
   }
@@ -314,6 +440,11 @@ export class ResearchRepository {
 
   async addAudit(audit: AdminAuditDoc): Promise<void> {
     const { adminAudit } = await collections();
+    if (audit.dedupeKey) {
+      // Idempotent: a retry after a crash (or a concurrent repair) never creates a second entry for the same key.
+      await adminAudit.updateOne({ dedupeKey: audit.dedupeKey }, { $setOnInsert: audit }, { upsert: true });
+      return;
+    }
     await adminAudit.insertOne(audit);
   }
 
@@ -322,8 +453,10 @@ export class ResearchRepository {
     pageSize: number;
     search?: string;
     packageCode?: string;
+    revision?: number;
     status?: SessionDoc['status'];
     groupCode?: GroupCode;
+    variant?: Presentation;
     validityFlag?: ValidityFlag;
     phase?: StudyPhase;
     sort?: 'newest' | 'oldest';
@@ -333,7 +466,9 @@ export class ResearchRepository {
     if (options.search) filter.id = { $regex: options.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
     if (options.status) filter.status = options.status;
     if (options.packageCode) filter.assignedPackageCode = options.packageCode.trim().toUpperCase();
+    if (options.revision) filter.assignedPackageRevision = options.revision;
     if (options.groupCode) filter.groupCode = options.groupCode;
+    if (options.variant) filter.presentationVariant = options.variant;
     if (options.validityFlag) filter.validityFlag = options.validityFlag;
     if (options.phase) filter.phase = options.phase;
     const [items, total] = await Promise.all([
@@ -378,7 +513,251 @@ export class ResearchRepository {
       { returnDocument: 'after' });
   }
 
-  async dashboardCounts(phase?: StudyPhase, filters: { group?: GroupCode; packageCode?: string; revision?: number } = {}) {
+  /**
+   * P4: Compare-and-set on the prior `(validityFlag, quotaStatus)` pair of a COMPLETED Study Run session (§6.4, AC-15, AC-16, AC-31).
+   */
+  async claimRunSessionQuotaTransition(input: ClaimRunSessionQuotaTransitionInput): Promise<SessionDoc | null> {
+    const { sessions } = await collections();
+    const filter: Filter<SessionDoc> = {
+      id: input.sessionId,
+      status: 'COMPLETED',
+      currentStage: 'COMPLETED',
+      studyRunId: input.studyRunId,
+      presentationVariant: input.variant,
+      validityFlag: input.expectedValidityFlag,
+      quotaStatus: (input.expectedQuotaStatus ?? null) as never,
+      ...(input.expectedReviewedAt !== undefined ? { validityReviewedAt: (input.expectedReviewedAt ?? null) as never } : {}),
+      ...(input.expectedQuotaRecordedAt !== undefined ? { quotaRecordedAt: (input.expectedQuotaRecordedAt ?? null) as never } : {}),
+      // A transition that replaces `quotaTransition` must not destroy a settled transition whose audit is still owed.
+      ...(input.transition !== undefined ? AUDIT_SETTLED_GUARD : {})
+    };
+    const setFields: Partial<SessionDoc> = {
+      validityFlag: input.nextValidityFlag,
+      validityReason: input.reason,
+      validityReviewedBy: input.reviewedBy,
+      validityReviewedAt: input.at,
+      validityChecklistVersion: input.checklistVersion,
+      ...(input.nextQuotaStatus !== null ? { quotaStatus: input.nextQuotaStatus } : {}),
+      ...(input.recordQuotaMeta ? { quotaRecordedAt: input.at, quotaRecordedBy: input.reviewedBy } : {}),
+      ...(input.transition !== undefined ? { quotaTransition: input.transition } : {}),
+      updatedAt: input.at
+    };
+    return sessions.findOneAndUpdate(
+      filter,
+      {
+        $set: setFields,
+        $push: { validityHistory: { flag: input.nextValidityFlag, reason: input.reason, reviewedBy: input.reviewedBy, reviewedAt: input.at } }
+      },
+      { returnDocument: 'after' }
+    );
+  }
+
+  async finalizeRunSessionQuotaStatus(input: FinalizeRunSessionQuotaStatusInput): Promise<SessionDoc | null> {
+    const { sessions } = await collections();
+    const setFields: Record<string, unknown> = {
+      quotaStatus: input.quotaStatus,
+      quotaRecordedAt: input.at,
+      quotaRecordedBy: input.recordedBy,
+      updatedAt: input.at
+    };
+    if (input.transitionId) {
+      setFields['quotaTransition.state'] = input.transitionState ?? 'COMMITTED';
+      setFields['quotaTransition.committedQuotaStatus'] = input.quotaStatus;
+      setFields['quotaTransition.updatedAt'] = input.at;
+      if (input.auditLogged !== undefined) {
+        setFields['quotaTransition.auditLogged'] = input.auditLogged;
+      }
+    }
+    return sessions.findOneAndUpdate(
+      {
+        id: input.sessionId,
+        status: 'COMPLETED',
+        currentStage: 'COMPLETED',
+        studyRunId: input.studyRunId,
+        presentationVariant: input.variant,
+        validityFlag: input.expectedValidityFlag ?? 'VALID',
+        validityReviewedAt: input.expectedReviewedAt,
+        quotaStatus: (input.expectedQuotaStatus ?? null) as never,
+        ...(input.transitionId ? { 'quotaTransition.id': input.transitionId, 'quotaTransition.state': 'PENDING' } : {})
+      } as Filter<SessionDoc>,
+      { $set: setFields },
+      { returnDocument: 'after' }
+    );
+  }
+
+  async revertRunSessionValidityClaim(input: RevertRunSessionValidityClaimInput): Promise<SessionDoc | null> {
+    const { sessions } = await collections();
+    const expectedFlag = input.claimedValidityFlag ?? 'VALID';
+    const expectedQuota = input.claimedQuotaStatus !== undefined ? input.claimedQuotaStatus : input.previousQuotaStatus;
+    const setFields: Record<string, unknown> = {
+      validityFlag: input.previousValidityFlag,
+      validityReason: input.previousReason,
+      validityChecklistVersion: input.previousChecklistVersion ?? null,
+      quotaTransition: null,
+      updatedAt: input.previousUpdatedAt ?? input.expectedReviewedAt
+    };
+    const unsetFields: Record<string, ''> = {};
+
+    if (input.previousReviewedBy !== undefined) {
+      setFields.validityReviewedBy = input.previousReviewedBy;
+    } else {
+      unsetFields.validityReviewedBy = '';
+    }
+    if (input.previousReviewedAt !== undefined) {
+      setFields.validityReviewedAt = input.previousReviewedAt;
+    } else {
+      unsetFields.validityReviewedAt = '';
+    }
+    if (input.previousQuotaStatus !== null) {
+      setFields.quotaStatus = input.previousQuotaStatus;
+    } else {
+      unsetFields.quotaStatus = '';
+    }
+    if (input.previousQuotaRecordedAt !== undefined && input.previousQuotaRecordedAt !== null) {
+      setFields.quotaRecordedAt = input.previousQuotaRecordedAt;
+    } else {
+      unsetFields.quotaRecordedAt = '';
+    }
+    if (input.previousQuotaRecordedBy !== undefined && input.previousQuotaRecordedBy !== null) {
+      setFields.quotaRecordedBy = input.previousQuotaRecordedBy;
+    } else {
+      unsetFields.quotaRecordedBy = '';
+    }
+
+    return sessions.findOneAndUpdate(
+      {
+        id: input.sessionId,
+        status: 'COMPLETED',
+        studyRunId: input.studyRunId,
+        validityFlag: expectedFlag,
+        validityReviewedAt: input.expectedReviewedAt,
+        quotaStatus: (expectedQuota ?? null) as never,
+        ...(input.transitionId ? { 'quotaTransition.id': input.transitionId } : {})
+      } as Filter<SessionDoc>,
+      {
+        $set: setFields,
+        ...(Object.keys(unsetFields).length > 0 ? { $unset: unsetFields } : {}),
+        $pop: { validityHistory: 1 }
+      },
+      { returnDocument: 'after' }
+    );
+  }
+
+  async claimSupplementalQuotaPromotion(input: ClaimSupplementalPromotionInput): Promise<SessionDoc | null> {
+    const { sessions } = await collections();
+    return sessions.findOneAndUpdate(
+      {
+        id: input.sessionId,
+        status: 'COMPLETED',
+        currentStage: 'COMPLETED',
+        studyRunId: input.studyRunId,
+        presentationVariant: input.variant,
+        validityFlag: 'VALID',
+        quotaStatus: 'SUPPLEMENTAL',
+        quotaRecordedAt: (input.expectedRecordedAt ?? null) as never,
+        ...AUDIT_SETTLED_GUARD
+      },
+      {
+        $set: {
+          quotaRecordedAt: input.at,
+          quotaRecordedBy: input.recordedBy,
+          ...(input.transition !== undefined ? { quotaTransition: input.transition } : {}),
+          updatedAt: input.at
+        }
+      },
+      { returnDocument: 'after' }
+    );
+  }
+
+  async finalizeSupplementalQuotaPromotion(input: {
+    sessionId: string;
+    studyRunId: ObjectId;
+    variant: Presentation;
+    claimAt: Date;
+    transitionId?: string;
+    transitionState?: 'COMMITTED' | 'RECOVERED';
+    auditLogged?: boolean;
+  }): Promise<SessionDoc | null> {
+    const { sessions } = await collections();
+    const setFields: Record<string, unknown> = {
+      quotaStatus: 'INCLUDED',
+      updatedAt: input.claimAt
+    };
+    if (input.transitionId) {
+      setFields['quotaTransition.state'] = input.transitionState ?? 'COMMITTED';
+      setFields['quotaTransition.committedQuotaStatus'] = 'INCLUDED';
+      setFields['quotaTransition.updatedAt'] = input.claimAt;
+      if (input.auditLogged !== undefined) {
+        setFields['quotaTransition.auditLogged'] = input.auditLogged;
+      }
+    }
+    return sessions.findOneAndUpdate(
+      {
+        id: input.sessionId,
+        status: 'COMPLETED',
+        currentStage: 'COMPLETED',
+        studyRunId: input.studyRunId,
+        presentationVariant: input.variant,
+        validityFlag: 'VALID',
+        quotaStatus: 'SUPPLEMENTAL',
+        quotaRecordedAt: input.claimAt,
+        ...(input.transitionId ? { 'quotaTransition.id': input.transitionId, 'quotaTransition.state': 'PENDING' } : {})
+      } as Filter<SessionDoc>,
+      { $set: setFields },
+      { returnDocument: 'after' }
+    );
+  }
+
+  async markRunSessionQuotaAuditLogged(sessionId: string, transitionId: string): Promise<void> {
+    const { sessions } = await collections();
+    await sessions.updateOne(
+      { id: sessionId, 'quotaTransition.id': transitionId } as Filter<SessionDoc>,
+      { $set: { 'quotaTransition.auditLogged': true } }
+    );
+  }
+
+  async revertSupplementalQuotaPromotion(input: RevertSupplementalPromotionInput): Promise<SessionDoc | null> {
+    const { sessions } = await collections();
+    return sessions.findOneAndUpdate(
+      {
+        id: input.sessionId,
+        status: 'COMPLETED',
+        studyRunId: input.studyRunId,
+        presentationVariant: input.variant,
+        validityFlag: 'VALID',
+        quotaStatus: 'SUPPLEMENTAL',
+        quotaRecordedAt: input.claimAt,
+        ...(input.transitionId ? { 'quotaTransition.id': input.transitionId } : {})
+      } as Filter<SessionDoc>,
+      {
+        $set: {
+          quotaRecordedAt: input.previousRecordedAt,
+          quotaRecordedBy: input.previousRecordedBy,
+          quotaTransition: null,
+          updatedAt: input.previousUpdatedAt ?? input.claimAt
+        }
+      },
+      { returnDocument: 'after' }
+    );
+  }
+
+  /** P4: Read-only reconciliation count of COMPLETED + VALID Study Run sessions by arm and quotaStatus (§6.4). */
+  async countRunQuotaFromSessions(studyRunId: ObjectId): Promise<StudyRunDoc['arms']> {
+    const { sessions } = await collections();
+    const base = { studyRunId, status: 'COMPLETED' as const, validityFlag: 'VALID' as const };
+    const [v1Included, v1Supplemental, v2Included, v2Supplemental] = await Promise.all([
+      sessions.countDocuments({ ...base, presentationVariant: 'V1', quotaStatus: 'INCLUDED' }),
+      sessions.countDocuments({ ...base, presentationVariant: 'V1', quotaStatus: 'SUPPLEMENTAL' }),
+      sessions.countDocuments({ ...base, presentationVariant: 'V2', quotaStatus: 'INCLUDED' }),
+      sessions.countDocuments({ ...base, presentationVariant: 'V2', quotaStatus: 'SUPPLEMENTAL' })
+    ]);
+    return {
+      V1: { validIncluded: v1Included, supplementalValid: v1Supplemental },
+      V2: { validIncluded: v2Included, supplementalValid: v2Supplemental }
+    };
+  }
+
+  async dashboardCounts(phase?: StudyPhase, filters: SessionExportFilters = {}) {
     const { sessions } = await collections();
     const base = { ...(phase ? { phase } : {}), ...(filters.group ? { groupCode: filters.group } : {}), ...(filters.packageCode ? { assignedPackageCode: filters.packageCode } : {}), ...(filters.revision ? { assignedPackageRevision: filters.revision } : {}) };
     const [started, completed, active, incomplete, withdrawn, consented, valid, invalid, review, groupA, groupB, groupAValid, groupBValid] = await Promise.all([
@@ -399,18 +778,23 @@ export class ResearchRepository {
     return { started, completed, active, incomplete, withdrawn, consented, valid, invalid, review, groupA, groupB, groupAValid, groupBValid };
   }
 
-  async listAllSessionsForExport(phase?: StudyPhase, filters: { group?: GroupCode; packageCode?: string; revision?: number } = {}): Promise<SessionDoc[]> {
+  async listAllSessionsForExport(phase?: StudyPhase, filters: SessionExportFilters = {}): Promise<SessionDoc[]> {
     const { sessions } = await collections();
     return sessions.find(this.sessionFilter(phase, filters)).sort({ createdAt: 1 }).toArray();
   }
 
-  private sessionFilter(phase?: StudyPhase, filters: { group?: GroupCode; packageCode?: string; revision?: number } = {}) {
-    return { ...(phase ? { phase } : {}), ...(filters.group ? { groupCode: filters.group } : {}),
+  private sessionFilter(phase?: StudyPhase, filters: SessionExportFilters = {}) {
+    return {
+      ...(phase ? { phase } : {}),
+      ...(filters.group ? { groupCode: filters.group } : {}),
+      ...(filters.variant ? { presentationVariant: filters.variant } : {}),
       ...(filters.packageCode ? { assignedPackageCode: filters.packageCode } : {}),
-      ...(filters.revision ? { assignedPackageRevision: filters.revision } : {}) };
+      ...(filters.revision ? { assignedPackageRevision: filters.revision } : {}),
+      ...(filters.studyRunId ? { studyRunId: new ObjectId(filters.studyRunId) } : {})
+    };
   }
 
-  async analysisDataset(phase?: StudyPhase, completedOnly = true, filters: { group?: GroupCode; packageCode?: string; revision?: number } = {}) {
+  async analysisDataset(phase?: StudyPhase, completedOnly = true, filters: SessionExportFilters = {}) {
     const c = await collections();
     const sessions = await c.sessions.find({ ...this.sessionFilter(phase, filters), ...(completedOnly ? { status: 'COMPLETED' } : {}) }).toArray();
     const ids = sessions.map((s) => s.id);
@@ -421,7 +805,7 @@ export class ResearchRepository {
     return { sessions, tests, readings };
   }
 
-  async listEventData(phase?: StudyPhase, filters: { group?: GroupCode; packageCode?: string; revision?: number } = {}) {
+  async listEventData(phase?: StudyPhase, filters: SessionExportFilters = {}) {
     const c = await collections();
     const sessions = await c.sessions.find(this.sessionFilter(phase, filters)).project({ id: 1 }).toArray();
     const ids = sessions.map((s) => s.id);
@@ -484,6 +868,59 @@ export class ResearchRepository {
       { _id: id, status: 'DRAFT', locked: false },
       { $set: update },
       { returnDocument: 'after' }
+    );
+  }
+
+  /** Updates a question set (both draft and published). */
+  async updateQuestionSet(id: ObjectId, update: Pick<QuestionSetDoc, 'label' | 'questions'>): Promise<QuestionSetDoc | null> {
+    const { questionSets } = await collections();
+    return questionSets.findOneAndUpdate(
+      { _id: id },
+      { $set: { label: update.label, questions: update.questions } },
+      { returnDocument: 'after' }
+    );
+  }
+
+  /** Checks if any participant test attempt has been recorded for this question set. */
+  async hasTestAttemptsForQuestionSet(id: ObjectId): Promise<boolean> {
+    const { testAttempts } = await collections();
+    return (await testAttempts.countDocuments({ questionSetId: id }, { limit: 1 })) > 0;
+  }
+
+  /** Deletes if unreferenced, or archives (soft delete) if responses or packages reference it. */
+  async deleteOrArchiveQuestionSet(id: ObjectId, by: string, at: Date): Promise<{ deleted: boolean; archived: boolean }> {
+    const { questionSets, testAttempts, contentPackages } = await collections();
+    const hasAttempts = (await testAttempts.countDocuments({ questionSetId: id }, { limit: 1 })) > 0;
+    const isOwned = (await contentPackages.countDocuments({ questionSetId: id }, { limit: 1 })) > 0;
+    if (hasAttempts || isOwned) {
+      await questionSets.findOneAndUpdate({ _id: id, archivedAt: null }, { $set: { archivedAt: at, archivedBy: by } });
+      return { deleted: false, archived: true };
+    }
+    const res = await questionSets.deleteOne({ _id: id });
+    return { deleted: res.deletedCount > 0, archived: false };
+  }
+
+  /** P5: hides a question set from new Study Runs. Nothing is edited or deleted; runs and sessions that already use it are unaffected. */
+  async archiveQuestionSet(id: ObjectId, by: string, at: Date): Promise<QuestionSetDoc | null> {
+    const { questionSets } = await collections();
+    return questionSets.findOneAndUpdate({ _id: id, archivedAt: null }, { $set: { archivedAt: at, archivedBy: by } }, { returnDocument: 'after' });
+  }
+
+  /** P5-D. Both variants default to unlocked; a missing document means nothing was ever locked. */
+  async getVariantLocks(): Promise<Record<Presentation, VariantLock>> {
+    const { experimentConfig } = await collections();
+    const doc = await (experimentConfig as unknown as Collection<VariantLocksDoc>).findOne({ key: 'variant-locks' });
+    return { V1: doc?.locks?.V1 ?? UNLOCKED, V2: doc?.locks?.V2 ?? UNLOCKED };
+  }
+
+  /** Touches ONLY the given variant's entry: locking V1 can never change V2. */
+  async setVariantLock(variant: Presentation, locked: boolean, by: string, at: Date): Promise<void> {
+    const { experimentConfig } = await collections();
+    const lock: VariantLock = { locked, changedBy: by, changedAt: at };
+    await (experimentConfig as unknown as Collection<VariantLocksDoc>).updateOne(
+      { key: 'variant-locks' },
+      { $set: { [`locks.${variant}`]: lock, updatedAt: at } },
+      { upsert: true }
     );
   }
 

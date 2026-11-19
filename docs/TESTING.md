@@ -90,3 +90,23 @@ Tests require dependencies and a reachable dedicated test DB. If integration fai
 - [ ] Sitemap exposes no research material.
 - [ ] No secrets are committed.
 - [ ] Production build succeeds locally.
+
+## Database isolation for integration tests (P0)
+
+Integration tests used to share one `*_test` database and every file called `dropDatabase()`, so files running in
+parallel workers (or two test runs at once, e.g. two CI jobs) deleted each other's data.
+
+- `tests/global-setup.ts` gives every run a unique id and, afterwards, drops only the databases that run created.
+- `tests/setup.ts` derives a private database per Vitest worker from `MONGODB_URI`:
+  `<base>_<runId>_w<workerId>_test` (always still ending in `_test`, at most 38 characters, so the destructive-test
+  guard and Atlas name limits keep working). The base database itself is never written to.
+- `tests/helpers/test-db.ts` uses one pooled client per worker, empties collections instead of dropping the
+  database, and builds indexes with the production `ensureIndexes()` (new indexes are covered automatically).
+- `tests/helpers/clock.ts` pins `Date` to the middle of a future 15-minute window for fixed-window rate-limit
+  tests, so a run can never straddle a window boundary.
+- The database user needs permission to create/drop databases named like the pattern above. If it cannot, set
+  `TEST_DB_ISOLATION=serial` (one shared database, file parallelism off).
+- A run killed by force (Ctrl+C twice, `kill -9`, CI timeout) can leave `<base>_<runId>_w<N>_test` databases
+  behind; drop them manually.
+- `npm run test:integration:stress -- 3 2` runs 3 concurrent test processes with 2 workers each against the same
+  base database and must PASS.

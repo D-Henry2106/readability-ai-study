@@ -3,12 +3,14 @@ import { WithdrawButton } from './WithdrawButton';
 
 export function ParticipantShell({
   step,
+  total,
   title,
   children,
   allowWithdraw = true,
   wide = false
-}: { 
+}: {
   step: number;
+  total?: number;
   title: string;
   children: React.ReactNode;
   allowWithdraw?: boolean;
@@ -32,7 +34,7 @@ export function ParticipantShell({
       </header>
 
       <div className="participant-layout stack">
-        <Progress step={step} />
+        <Progress step={step} total={total} />
 
         <section className="card participant-card stack">
           <header className="participant-heading">

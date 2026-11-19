@@ -1,3 +1,4 @@
+import { plainTextOf } from '@/lib/html-text';
 import { createHash } from 'node:crypto';
 
 export function normalizeExperimentalText(value: string): string {
@@ -9,7 +10,7 @@ export function contentHash(value: string): string {
 }
 
 export function countWords(value: string): number {
-  const normalized = normalizeExperimentalText(value);
+  const normalized = normalizeExperimentalText(plainTextOf(value));
   return normalized ? normalized.split(' ').length : 0;
 }
 

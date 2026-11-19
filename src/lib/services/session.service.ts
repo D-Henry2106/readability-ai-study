@@ -19,7 +19,9 @@ export class SessionService {
     if (!result.ready) throw new Error(`EXPERIMENT_NOT_READY:${result.missing.join(',')}`);
     const config = await this.repo.getConfig();
     const { pkg, mode } = await new PackageService(this.repo).choose(config);
-    if (!pkg._id || !config.informationVersion || !config.consentVersion || !config.debriefVersion) {
+    const publishedQs = await this.repo.getPublishedQuestionSet(config.phase);
+    const questionSetId = pkg.questionSetId ?? publishedQs?._id;
+    if (!pkg._id || !questionSetId || !config.informationVersion || !config.consentVersion || !config.debriefVersion) {
       throw new Error('EXPERIMENT_NOT_READY');
     }
     const now = new Date();
@@ -30,7 +32,7 @@ export class SessionService {
       currentStage: 'INFORMATION',
       groupCode: null,
       contentRevisionId: pkg.contentRevisionId,
-      questionSetId: pkg.questionSetId,
+      questionSetId,
       assignedPackageId: pkg._id,
       assignedPackageRevision: pkg.revision,
       assignedPackageCode: pkg.code,

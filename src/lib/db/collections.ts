@@ -3,6 +3,7 @@ import { getDb } from './mongodb';
 import type {
   AdminAuditDoc,
   AdminDoc,
+  AdminSessionDoc,
   BreakDoc,
   ConsentDoc,
   ContentRevisionDoc,
@@ -11,10 +12,14 @@ import type {
   ExperimentConfigDoc,
   ExperimentEventDoc,
   QuestionSetDoc,
+  RateLimitDoc,
   ReadingSessionDoc,
   SessionDoc,
   TestAttemptDoc
 } from '@/types/research';
+import type { StudyRunDoc } from '@/types/study-run';
+import type { InvitationDoc } from '@/types/invitation';
+import type { PresentationProfileDoc } from '@/types/presentation-profile';
 
 export async function collections(): Promise<{
   sessions: Collection<SessionDoc>;
@@ -29,7 +34,12 @@ export async function collections(): Promise<{
   experimentEvents: Collection<ExperimentEventDoc>;
   admins: Collection<AdminDoc>;
   adminAudit: Collection<AdminAuditDoc>;
+  adminSessions: Collection<AdminSessionDoc>;
+  rateLimits: Collection<RateLimitDoc>;
   experimentConfig: Collection<ExperimentConfigDoc>;
+  studyRuns: Collection<StudyRunDoc>;
+  invitations: Collection<InvitationDoc>;
+  presentationProfiles: Collection<PresentationProfileDoc>;
 }> {
   const db = await getDb();
   return {
@@ -45,6 +55,11 @@ export async function collections(): Promise<{
     experimentEvents: db.collection<ExperimentEventDoc>('experiment_events'),
     admins: db.collection<AdminDoc>('admins'),
     adminAudit: db.collection<AdminAuditDoc>('admin_audit'),
-    experimentConfig: db.collection<ExperimentConfigDoc>('experiment_config')
+    adminSessions: db.collection<AdminSessionDoc>('admin_sessions'),
+    rateLimits: db.collection<RateLimitDoc>('rate_limits'),
+    experimentConfig: db.collection<ExperimentConfigDoc>('experiment_config'),
+    studyRuns: db.collection<StudyRunDoc>('study_runs'),
+    invitations: db.collection<InvitationDoc>('invitations'),
+    presentationProfiles: db.collection<PresentationProfileDoc>('presentation_profiles')
   };
 }

@@ -2,6 +2,7 @@ import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { collections } from '../src/lib/db/collections';
 import { hashPassword } from '../src/lib/security/password';
+import { validateAdminPassword } from '../src/lib/security/password-policy';
 import { ensureIndexes } from '../src/lib/db/indexes';
 import type { AdminRole } from '../src/types/research';
 import { getMongoClient } from '../src/lib/db/mongodb';
@@ -62,6 +63,8 @@ async function main(): Promise<void> {
 
     if (!username) throw new Error('Username is required.');
     if (password !== confirm) throw new Error('Passwords do not match.');
+    const policy = validateAdminPassword(password, { username });
+    if (!policy.ok) throw new Error(policy.errors.map((e) => e.message).join(' '));
 
     const passwordHash = await hashPassword(password);
     await ensureIndexes();
