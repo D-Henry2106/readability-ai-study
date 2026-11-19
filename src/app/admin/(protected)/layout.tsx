@@ -10,9 +10,6 @@ export default async function Layout({ children }: { children: React.ReactNode }
       <div className="admin-layout">
         <AdminSidebar username={admin.username} role={admin.role} />
         <main className="admin-main" id="noi-dung-chinh">
-          <div className="admin-pagebar">
-            <span>Research Dashboard / Quản trị</span>
-          </div>
           {children}
         </main>
       </div>

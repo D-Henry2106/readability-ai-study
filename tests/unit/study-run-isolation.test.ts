@@ -72,6 +72,8 @@ const ALLOWED = new Set([
   'src/app/api/admin/invitations/route.ts',
   'src/app/api/admin/variant-locks/route.ts',
   'src/components/admin/AdminSidebar.tsx',
+  // P7: admin-only, read-only activity log; it only holds plain-language labels for audit action codes.
+  'src/lib/services/activity-log.service.ts',
   'src/components/admin/StudyRunManager.tsx',
   'src/components/admin/InvitationManager.tsx',
   'src/components/admin/QuestionManager.tsx',

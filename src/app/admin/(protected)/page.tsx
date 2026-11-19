@@ -62,7 +62,7 @@ export default async function Page({
         <div>
           <h1>Bảng điều khiển quản trị</h1>
           <p className="help">
-            Theo dõi quy trình nghiên cứu: Bộ câu hỏi &rarr; Bộ nội dung &rarr; Vận hành thực nghiệm &rarr; Dữ liệu phiên.
+            Làm lần lượt 4 bước: bộ câu hỏi, bài đọc, đợt nghiên cứu, dữ liệu người tham gia.
           </p>
         </div>
         <div className="row" style={{ alignItems: 'center', gap: 12 }}>
@@ -119,7 +119,7 @@ export default async function Page({
               <small>({publishedQuestionSets.length} đã xuất bản)</small>
             </div>
             <Link href="/admin/questions" className="btn btn-secondary btn-small" style={{ marginTop: 'auto' }}>
-              Quản lý câu hỏi &rarr;
+              Quản lý câu hỏi
             </Link>
           </div>
 
@@ -138,7 +138,7 @@ export default async function Page({
               <small>({publishedPackages.length} đã xuất bản)</small>
             </div>
             <Link href="/admin/content" className="btn btn-secondary btn-small" style={{ marginTop: 'auto' }}>
-              Quản lý nội dung &rarr;
+              Quản lý nội dung
             </Link>
           </div>
 
@@ -158,10 +158,10 @@ export default async function Page({
             </div>
             <div className="row" style={{ gap: 6, marginTop: 'auto' }}>
               <Link href={opsRunsRoute} className="btn btn-secondary btn-small">
-                Đợt nghiên cứu &rarr;
+                Đợt nghiên cứu
               </Link>
               <Link href={opsLinksRoute} className="btn btn-secondary btn-small">
-                Phát link &rarr;
+                Phát link
               </Link>
             </div>
           </div>
@@ -181,7 +181,7 @@ export default async function Page({
               <small>hoàn thành · {counts.review} chờ duyệt</small>
             </div>
             <Link href="/admin/sessions" className="btn btn-secondary btn-small" style={{ marginTop: 'auto' }}>
-              Xem người tham gia &rarr;
+              Xem người tham gia
             </Link>
           </div>
         </div>
@@ -195,7 +195,7 @@ export default async function Page({
             <p className="help">Tiến độ người tham gia hợp lệ ở từng nhóm và số link riêng đã gửi.</p>
           </div>
           <Link href={opsRunsRoute} className="btn btn-secondary btn-small">
-            Quản lý đợt &rarr;
+            Quản lý đợt
           </Link>
         </div>
 
@@ -288,10 +288,10 @@ export default async function Page({
 
           <div className="space-between" style={{ marginTop: 8 }}>
             <Link href="/admin/sessions" className="btn btn-secondary btn-small">
-              Xét duyệt ({counts.review} phiên) &rarr;
+              Xét duyệt ({counts.review} phiên)
             </Link>
             <Link href="/admin/exports" className="btn btn-secondary btn-small">
-              Xuất dữ liệu &rarr;
+              Xuất dữ liệu
             </Link>
           </div>
         </section>
@@ -306,7 +306,7 @@ export default async function Page({
               </p>
             </div>
             <Link href="/admin/statistics" className="btn btn-secondary btn-small">
-              Chi tiết &rarr;
+              Chi tiết
             </Link>
           </div>
 
@@ -372,7 +372,7 @@ export default async function Page({
               Văn bản thông tin, đồng ý, giải thích sau nghiên cứu, quyền dữ liệu, thông tin kết quả và thời gian đọc tối thiểu.
             </p>
             <Link href="/admin/config" className="btn btn-secondary btn-small">
-              Cấu hình giao thức &rarr;
+              Cấu hình giao thức
             </Link>
           </div>
 

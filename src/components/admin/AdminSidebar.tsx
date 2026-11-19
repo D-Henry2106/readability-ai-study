@@ -19,32 +19,31 @@ interface NavSection {
 
 const sections: NavSection[] = [
   {
-    title: 'TỔNG QUAN',
+    title: 'Tổng quan',
+    links: [{ href: '/admin', label: 'Bảng điều khiển', icon: 'layers' }]
+  },
+  {
+    title: 'Chuẩn bị',
     links: [
-      { href: '/admin', label: 'Bảng điều khiển', icon: 'layers' }
+      { href: '/admin/questions', label: 'Bộ câu hỏi', icon: 'list' },
+      { href: '/admin/content', label: 'Bài đọc V1 và V2', icon: 'book' },
+      { href: '/admin/config', label: 'Văn bản và cài đặt', icon: 'settings' }
     ]
   },
   {
-    title: 'QUẢN LÝ NỘI DUNG',
+    title: 'Thu thập dữ liệu',
     links: [
-      { href: '/admin/questions', label: 'Bộ câu hỏi (15 câu)', icon: 'list' },
-      { href: '/admin/content', label: 'Bộ nội dung (V1/V2)', icon: 'book' }
+      { href: '/admin/study-runs', label: 'Đợt nghiên cứu', icon: 'play' },
+      { href: '/admin/invitations', label: 'Link mời', icon: 'mail' },
+      { href: '/admin/sessions', label: 'Người tham gia', icon: 'users' }
     ]
   },
   {
-    title: 'VẬN HÀNH NGHIÊN CỨU',
+    title: 'Kết quả',
     links: [
-      { href: '/admin/study-runs', label: 'Study Runs', icon: 'play' },
-      { href: '/admin/invitations', label: 'Lời mời / Invitations', icon: 'mail' },
-      { href: '/admin/sessions', label: 'Người tham gia & Phiên', icon: 'users' },
-      { href: '/admin/statistics', label: 'Thống kê kết quả', icon: 'barChart' },
-      { href: '/admin/exports', label: 'Xuất dữ liệu nghiên cứu', icon: 'download' }
-    ]
-  },
-  {
-    title: 'HỆ THỐNG',
-    links: [
-      { href: '/admin/config', label: 'Cấu hình nghiên cứu', icon: 'settings' }
+      { href: '/admin/statistics', label: 'Thống kê', icon: 'barChart' },
+      { href: '/admin/exports', label: 'Xuất dữ liệu', icon: 'download' },
+      { href: '/admin/activity', label: 'Nhật ký hoạt động', icon: 'shield' }
     ]
   }
 ];
@@ -58,7 +57,7 @@ export function AdminSidebar({ username, role }: { username: string; role: strin
       <div className="admin-mobile-top">
         <div className="row" style={{ alignItems: 'center', gap: 8 }}>
           <span className="brand-mark" aria-hidden="true">CRP</span>
-          <strong>Quản trị nghiên cứu</strong>
+          <strong>Quản lý nghiên cứu</strong>
         </div>
         <button
           type="button"
@@ -67,7 +66,7 @@ export function AdminSidebar({ username, role }: { username: string; role: strin
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
         >
-          {open ? 'Đóng menu' : '☰ Menu'}
+          {open ? 'Đóng' : 'Menu'}
         </button>
       </div>
 
