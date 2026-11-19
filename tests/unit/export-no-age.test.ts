@@ -30,14 +30,30 @@ const session = {
   createdAt: new Date('2026-01-01T00:00:00Z'), completedAt: new Date('2026-01-01T00:10:00Z')
 };
 const bundle = {
-  readings: [{ roundNo: 1, presentation: 'V1', readingSeconds: 60, scrollCount: 3, maxScrollDepthPercent: 100 }],
-  tests: [{ roundNo: 1, presentation: 'V1', score: 12, answers: [] }],
+  readings: [{ roundNo: 1, presentation: 'V1', readingSeconds: 60, scrollCount: 3, maxScrollDepthPercent: 100, startedAt: new Date('2026-01-01T00:01:00Z'), finishedAt: new Date('2026-01-01T00:02:00Z') }],
+  tests: [{ roundNo: 1, presentation: 'V1', score: 12, answers: [], startedAt: new Date('2026-01-01T00:03:00Z'), submittedAt: new Date('2026-01-01T00:09:00Z') }],
   demographics: { ageRange: '21–24', gender: 'Nữ', fieldOfStudy: 'CNTT', yearOfStudy: 'Năm 3', aiUsageFrequency: 'Hằng ngày', onlineReadingFrequency: 'Hằng ngày' }
 };
 const repo = {
   listAllSessionsForExport: async () => [session],
-  getSessionBundle: async () => bundle
+  getSessionBundle: async () => bundle,
+  getContentById: async () => ({ contentHash: 'hash-c1' })
 } as unknown as ResearchRepository;
+
+describe('run export traceability columns', () => {
+  it('carries the source hash and the reading and test timestamps, aligned with the header', async () => {
+    const csv = await new ExportService(repo).run('MAIN');
+    const [header, row] = csv.split('\n');
+    expect(cells(row)).toHaveLength(cells(header).length);
+    const col = (name: string) => cells(row)[cells(header).indexOf(name)];
+    expect(col('content_revision_id')).toBe('c1');
+    expect(col('source_hash')).toBe('hash-c1');
+    expect(col('read_start')).toBe('2026-01-01T00:01:00.000Z');
+    expect(col('read_end')).toBe('2026-01-01T00:02:00.000Z');
+    expect(col('test_started_at')).toBe('2026-01-01T00:03:00.000Z');
+    expect(col('test_submitted_at')).toBe('2026-01-01T00:09:00.000Z');
+  });
+});
 
 describe('exports no longer contain the age column', () => {
   for (const format of ['run', 'wide'] as const) {

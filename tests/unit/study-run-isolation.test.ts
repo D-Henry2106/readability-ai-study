@@ -74,6 +74,9 @@ const ALLOWED = new Set([
   'src/components/admin/AdminSidebar.tsx',
   // P7: admin-only, read-only activity log; it only holds plain-language labels for audit action codes.
   'src/lib/services/activity-log.service.ts',
+  // P8: admin-only Research Logs page and its read-only service (filters by run, reconciles the export).
+  'src/lib/services/research-log.service.ts',
+  'src/app/admin/(protected)/logs/page.tsx',
   'src/components/admin/StudyRunManager.tsx',
   'src/components/admin/InvitationManager.tsx',
   'src/components/admin/QuestionManager.tsx',

@@ -43,7 +43,7 @@ const sections: NavSection[] = [
     links: [
       { href: '/admin/statistics', label: 'Thống kê', icon: 'barChart' },
       { href: '/admin/exports', label: 'Xuất dữ liệu', icon: 'download' },
-      { href: '/admin/activity', label: 'Nhật ký hoạt động', icon: 'shield' }
+      { href: '/admin/logs', label: 'Nhật ký nghiên cứu', icon: 'shield' }
     ]
   }
 ];

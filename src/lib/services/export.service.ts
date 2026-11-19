@@ -57,17 +57,24 @@ export class ExportService {
     const sessions = (await this.repo.listAllSessionsForExport(phase, filters)).filter((s) => s.studyRunId);
     const rows = [line(['session_id','participant_id','invitation_id','study_run_id','variant','presentation_version','question_set_id','question_set_revision',
       'package_code','package_revision','status','validity','device','gender','field_of_study','year_of_study','ai_usage_frequency','online_reading_frequency',
-      'reading_seconds','scroll_count','max_scroll_depth_percent','score','score_max','answers','created_at','completed_at'])];
+      'reading_seconds','scroll_count','max_scroll_depth_percent','score','score_max','answers','created_at','completed_at',
+      'content_revision_id','source_hash','read_start','read_end','test_started_at','test_submitted_at'])];
+    const sourceHashByContent = new Map<string, string | null>();
     for (const session of sessions) {
       const bundle = await this.repo.getSessionBundle(session.id);
       const reading = bundle.readings.find((r) => r.roundNo === 1);
       const test = bundle.tests.find((t) => t.roundNo === 1);
+      // Hash of the original (V1) text, so every row can be traced to the exact source it was shown.
+      const contentId = session.contentRevisionId ? session.contentRevisionId.toString() : null;
+      if (contentId && !sourceHashByContent.has(contentId)) sourceHashByContent.set(contentId, (await this.repo.getContentById(session.contentRevisionId))?.contentHash ?? null);
+      const sourceHash = contentId ? sourceHashByContent.get(contentId) ?? null : null;
       rows.push(line([session.id, session.participantId, session.invitationId?.toHexString(), session.studyRunId?.toHexString(), session.presentationVariant, session.presentationVersion,
         session.questionSetId.toHexString(), session.questionSetRevision, session.assignedPackageCode, session.assignedPackageRevision, session.status, session.validityFlag, session.deviceType,
         bundle.demographics?.gender, bundle.demographics?.fieldOfStudy, bundle.demographics?.yearOfStudy, bundle.demographics?.aiUsageFrequency, bundle.demographics?.onlineReadingFrequency,
         reading?.readingSeconds, reading?.scrollCount, reading?.maxScrollDepthPercent, test?.score, test?.answers.length,
         test ? JSON.stringify(test.answers.map((a) => ({ questionId: a.questionId, selectedOptionId: a.selectedOptionId, isCorrect: a.isCorrect }))) : null,
-        session.createdAt, session.completedAt]));
+        session.createdAt, session.completedAt,
+        contentId, sourceHash, reading?.startedAt, reading?.finishedAt, test?.startedAt, test?.submittedAt]));
     }
     return rows.join('\n');
   }

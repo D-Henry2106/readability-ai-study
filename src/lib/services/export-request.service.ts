@@ -34,7 +34,8 @@ export async function exportResearchCsv(request: NextRequest) {
     await new AuditService(repo).record({ username: admin.username, role: admin.role, action: 'DATA_EXPORTED', targetType: 'csv',
       metadata: { format, phase, group: filters.group ?? null,
         packageCode: filters.packageCode ?? null, revision: filters.revision ?? null, variant: filters.variant ?? null, studyRunId: filters.studyRunId ?? null } });
-    return new NextResponse(csv, { headers: {
+    // The BOM makes Excel read the file as UTF-8, so non-English answers are not garbled.
+    return new NextResponse(`\uFEFF${csv}`, { headers: {
       'content-type': 'text/csv; charset=utf-8',
       'content-disposition': `attachment; filename="research-${phase.toLowerCase()}-${format}${filters.variant ? `-${filters.variant}` : ''}.csv"`,
       'cache-control': 'no-store', 'x-content-type-options': 'nosniff'

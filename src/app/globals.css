@@ -1019,7 +1019,7 @@ details summary {
 .preview-grid>section{min-width:0;border:1px solid var(--border);border-radius:10px;background:var(--surface-soft);padding:14px}
 .readiness-list{list-style:none;padding:0}.readiness-list li{padding:8px 0;border-bottom:1px solid var(--border)}
 /* Do not automatically bold the opening paragraph; emphasis needs approved immutable metadata. */
-.reader-v2 { font-size: clamp(1.075rem, 1.1vw + .86rem, 1.25rem); line-height: 1.9; max-width: 62ch; color: #14273b; }
+.reader-v2 { font-size: clamp(1.075rem, 1.1vw + .86rem, 1.25rem); line-height: 1.9; max-width: 62ch; color: #000; }
 .reader-v2 .accessible-block { padding-block: .2em; }
 .chart-rows { display: grid; gap: 12px; }
 .chart-row { display: grid; gap: 5px; min-width: 0; }
